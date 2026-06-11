@@ -63,7 +63,7 @@ VOUCHER_LOTTERY_DETAIL_PATH = "/api/activity/brand/activity/ns/getVoucherLottery
 EXCHANGE_LOTTERY_CHANCE_PATH = "/api/activity/brand/activity/exchangeLotteryChance"
 LOTTERY_KEY_COUNT_PATH = "/api/cgi/operationService/front/lottery/getLuckyKeyCount"
 LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
-DEFAULT_LOTTERY_ACTIVITY_CODE = os.getenv("LOTTERY_ACTIVITY_CODE", "LAKU")
+DEFAULT_LOTTERY_ACTIVITY_CODE = "LAKU"
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
 # 检查必要变量

@@ -29,7 +29,6 @@ jobs:
       HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
       TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
       TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
-      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
     steps:
       - id: prepare
         name: 检查 Secrets 并生成账号矩阵
@@ -53,7 +52,6 @@ jobs:
               "HEADER_SECRET_KEY",
               "TOKEN_KEY",
               "TOKEN_ALTERNATIVE_KEYS",
-              "LOTTERY_ACTIVITY_CODE",
           ]
           missing = [name for name in required if not os.getenv(name, "").strip()]
           if missing:
@@ -118,7 +116,6 @@ jobs:
       HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
       TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
       TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
-      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
       LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
       LOTTERY_MAX_DRAWS: "3"
       LOTTERY_SIGNUP_DELAY_MIN: "3"
@@ -330,7 +327,6 @@ jobs:
       HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
       TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
       TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
-      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
       LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
       LOTTERY_MAX_DRAWS: "3"
       LOTTERY_SIGNUP_DELAY_MIN: "3"
