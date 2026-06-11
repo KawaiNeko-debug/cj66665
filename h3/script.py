@@ -111,6 +111,12 @@ def safe_int(v, default=0) -> int:
     except Exception:
         return default
 
+def safe_float(v, default=0.0) -> float:
+    try:
+        return float(str(v).strip())
+    except Exception:
+        return default
+
 def truncate_text(s: str, limit: int = 1200) -> str:
     if s is None:
         return ""
