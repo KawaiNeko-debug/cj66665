@@ -62,16 +62,33 @@ LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
 DEFAULT_LOTTERY_ACTIVITY_CODE = os.getenv("LOTTERY_ACTIVITY_CODE", "LAKU")
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
-# 检查必要变量
-required_vars = [
-    BASE_URL, PASSPORT_URL, REFERER,
-    SLIDER_ID, WRAPPER_ID,
-    HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY
+REQUIRED_ENV_VARS = [
+    "BASE_URL", "PASSPORT_URL", "REFERER", 
+    "SLIDER_ID", "WRAPPER_ID", 
+    "HEADER_CLIENT_TYPE", "HEADER_ACCESS_TOKEN", "TOKEN_KEY"
 ]
-if not all(required_vars):
-    print("? 缺少必要环境变量，请检查以下变量是否全部设置：")
-    print("BASE_URL, PASSPORT_URL, REFERER, SLIDER_ID, WRAPPER_ID, HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY")
-    sys.exit(1)
+
+missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+
+
+def log(param):
+    pass
+
+
+if missing_vars:
+    log(f"❌ 启动失败！检测到以下环境变量未在 GitHub Secrets 中配置: {', '.join(missing_vars)}")
+    log("👉 请去 GitHub -> Settings -> Secrets 中检查这些变量的拼写是否完全正确（包括大小写）。")
+    sys.exit(1) # 强制终止，不再往下跑
+
+# 读取配置
+BASE_URL = os.getenv('BASE_URL')
+PASSPORT_URL = os.getenv('PASSPORT_URL')
+REFERER = os.getenv('REFERER')
+SLIDER_ID = os.getenv('SLIDER_ID')
+WRAPPER_ID = os.getenv('WRAPPER_ID')
+HEADER_CLIENT_TYPE = os.getenv('HEADER_CLIENT_TYPE')
+HEADER_ACCESS_TOKEN = os.getenv('HEADER_ACCESS_TOKEN')
+TOKEN_KEY = os.getenv('TOKEN_KEY')
 
 parsed_base = urlparse(BASE_URL)
 HOST = parsed_base.netloc
