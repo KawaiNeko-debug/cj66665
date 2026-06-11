@@ -11,22 +11,17 @@ jobs:
   lottery-matrix:
     runs-on: ubuntu-latest
     strategy:
-      # 【核心1】控制并发数：无论你有多少个号，同时最多只有 3 台机器在跑
       max-parallel: 3
-      # 【核心2】防连锁崩溃：某一个账号报错失败，不影响其他机器继续跑
       fail-fast: false
       matrix:
-        # 【核心3】这里填入你的账号序号。
-        # 比如你有 6 个账号，就写 [1, 2, 3, 4, 5, 6]
-        # 有 10 个就写 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         account_index: [1, 2, 3, 4, 5, 6]
 
     steps:
       - name: 检查代码仓库
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # ✅ 已升级到 v4
 
       - name: 设置 Python 环境
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # ✅ 已升级到 v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -42,16 +37,14 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: 提取对应账号并执行
+      - name: 提取对应账号并执行抽奖
         env:
-          # 敏感信息
           BASE_URL: ${{ secrets.BASE_URL }}
           PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
           REFERER: ${{ secrets.REFERER }}
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
           BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
           
-          # 与延迟参数 (因独立机器跑，延迟可适当放宽一点)
           LOTTERY_ACTIVITY_CODE: "LAKU"
           LOTTERY_MAX_DRAWS: "3"
           LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
@@ -62,34 +55,27 @@ jobs:
           LOTTERY_DRAW_DELAY_MIN: "5"
           LOTTERY_DRAW_DELAY_MAX: "8"
           
-          # 当前机器对应的序号和独立的结果文件路径
           ACCOUNT_INDEX: ${{ matrix.account_index }}
           RESULT_JSON_PATH: result-${{ matrix.account_index }}.json
         run: |
-          # 1. 把 Secrets 里的多行账号列表写进临时文件
           echo "$ACCOUNTS" > accounts.txt
-          
-          # 2. 剔除空行后，精确读取第 N 行 (N就是当前的机器序号)
           ACCOUNT_LINE=$(sed '/^$/d' accounts.txt | sed -n "${ACCOUNT_INDEX}p")
           
-          # 判断该行是否有数据
           if [ -z "$ACCOUNT_LINE" ]; then
             echo "未找到序号为 ${ACCOUNT_INDEX} 的账号，自动跳过该机器。"
             exit 0
           fi
           
-          # 3. 截取出用户名和密码
           USERNAME=$(echo "$ACCOUNT_LINE" | cut -d',' -f1 | xargs)
           PASSWORD=$(echo "$ACCOUNT_LINE" | cut -d',' -f2 | xargs)
           
           echo "🚀 这台独立机器分配到的账号序号: ${ACCOUNT_INDEX}"
           
-          # 4. 直接调用单兵脚本 script.py，传入对应的账号密码
           python h3/script.py "$USERNAME" "$PASSWORD" "false"
 
-      - name: 上传该机器的结果记录
-        uses: actions/upload-artifact@v3
-        if: always() # 无论成功失败都上传，方便后续合并汇总
+      - name: 上传该机器的抽奖结果记录
+        uses: actions/upload-artifact@v4  # ✅ 已升级到 v4
+        if: always()
         with:
           name: result-${{ matrix.account_index }}
           path: result-${{ matrix.account_index }}.json
@@ -100,34 +86,33 @@ jobs:
   # =========================================================
   summary-report:
     needs: lottery-matrix
-    if: always() # 必须等上面的机器全部跑完才执行
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: 检查代码仓库
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # ✅ 已升级到 v4
         
       - name: 设置 Python 环境
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # ✅ 已升级到 v5
         with:
           python-version: '3.11'
           
       - name: 下载所有独立机器产生的结果文件
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4  # ✅ 已升级到 v4
         with:
           path: downloaded_results
 
-      - name: 执行合并脚本 (调用你原有的 merge_results.py)
+      - name: 执行合并脚本
         run: |
-          pip install pandas openpyxl  # 安装处理 Excel 的依赖
-          # 这里调用你仓库里原有的合并汇总脚本，如果有差异请修改脚本名
+          pip install pandas openpyxl
           if [ -f h3/merge_results.py ]; then
             python h3/merge_results.py
           fi
           
       - name: 上传最终的 Excel 总表
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # ✅ 已升级到 v4
         if: always()
         with:
           name: Final-Lottery-Report
-          path: "*.xlsx" # 根据你实际生成的 excel 路径调整
+          path: "*.xlsx"
           retention-days: 7
