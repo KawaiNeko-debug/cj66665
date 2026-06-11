@@ -1,42 +1,40 @@
-name: cj
+name: lottery-manual
 
 on:
   workflow_dispatch:
 
 jobs:
-  lottery-matrix:
+  run-lottery:
     runs-on: ubuntu-latest
-    strategy:
-      max-parallel: 3
-      fail-fast: false
-      matrix:
-        account_index: [1, 2, 3, 4, 5, 6]
 
     steps:
-      - name: 检查代码仓库
-        uses: actions/checkout@v4
+      - name: 检查仓库代码
+        uses: actions/checkout@v3
 
       - name: 设置 Python 环境
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 安装项目依赖
+      - name: 安装项目依赖组件
         run: |
           python -m pip install --upgrade pip
           if [ -f h3/requirements.txt ]; then pip install -r h3/requirements.txt; fi
+          # 确保安装了 requests, playwright, fake-useragent 等基础库
           pip install playwright requests fake-useragent
 
-      - name: 安装 Playwright 浏览器内核 (独立环境必需)
+      - name: 安装 Playwright 浏览器内核及系统依赖
         run: |
+          # 必须安装 chromium 内核及运行所需的 Ubuntu 系统底层依赖
           playwright install chromium
           playwright install-deps chromium
 
-      - name: 提取对应账号并执行抽奖
+      - name: 启动自动化批量
+        run: python h3/batch_runner.py
         env:
           # ====================================================================
-          # 1. 隐私与敏感信息 (网址、账号、滑块特征已安全隔离)
+          # 1. 隐私与敏感信息 (安全读取 GitHub Secrets，绝对保密)
           # ====================================================================
           BASE_URL: ${{ secrets.BASE_URL }}
           PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
@@ -45,88 +43,58 @@ jobs:
           BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
           SLIDER_ID: ${{ secrets.SLIDER_ID }}
           WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
-          
-          # ====================================================================
-          # 2. 抽奖与风控核心配置 (纯数字/通用字母，无平台特征)
-          # ====================================================================
-          LOTTERY_ACTIVITY_CODE: "LAKU"
-          LOTTERY_MAX_DRAWS: "3"
-          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
-          LOTTERY_SIGNUP_DELAY_MIN: "3"
-          LOTTERY_SIGNUP_DELAY_MAX: "5"
-          LOTTERY_EXCHANGE_DELAY_MIN: "3"
-          LOTTERY_EXCHANGE_DELAY_MAX: "5"
-          LOTTERY_DRAW_DELAY_MIN: "5"
-          LOTTERY_DRAW_DELAY_MAX: "8"
-          
-          # ====================================================================
-          # 3. 请求头固定配置 (平台特征字眼已安全隔离)
-          # ====================================================================
           HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
           HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
+          HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
+          HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
           TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
           TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
-          HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
-          HEADER_SECRET_KEY: "secretkey" # 这个是通用词汇，无需打码
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           
           # ====================================================================
-          # 4. 机器索引与文件路径
+          # 2. 与风控核心配置 (明文展示，允许随时在线修改)
           # ====================================================================
-          ACCOUNT_INDEX: ${{ matrix.account_index }}
-          RESULT_JSON_PATH: result-${{ matrix.account_index }}.json
-        run: |
-          echo "$ACCOUNTS" > accounts.txt
-          ACCOUNT_LINE=$(sed '/^$/d' accounts.txt | sed -n "${ACCOUNT_INDEX}p")
+          # 活动标识与频率限制
+          LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
+          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"  # 每个账号最多尝试兑换几次机会
+          LOTTERY_MAX_DRAWS: "3"              # 每个账号最多执行几次动作
           
-          if [ -z "$ACCOUNT_LINE" ]; then
-            echo "未找到序号为 ${ACCOUNT_INDEX} 的账号，自动跳过该机器。"
-            exit 0
-          fi
+          # 拟人化随机延迟设置 (单位：秒)
+          LOTTERY_SIGNUP_DELAY_MIN: "3"       # 报名活动之间的最小间隔
+          LOTTERY_SIGNUP_DELAY_MAX: "5"       # 报名活动之间的最大间隔
+          LOTTERY_EXCHANGE_DELAY_MIN: "3"     # 兑换机会之间的最小间隔
+          LOTTERY_EXCHANGE_DELAY_MAX: "5"     # 兑换机会之间的最大间隔
+          LOTTERY_DRAW_DELAY_MIN: "7"         # 每次点击的最小间隔 (推荐拉长防封号)
+          LOTTERY_DRAW_DELAY_MAX: "10"        # 每次点击的最大间隔
           
-          USERNAME=$(echo "$ACCOUNT_LINE" | cut -d',' -f1 | xargs)
-          PASSWORD=$(echo "$ACCOUNT_LINE" | cut -d',' -f2 | xargs)
+          # 自动化控制与防封号熔断机制
+          RISK_CONTROL_MESSAGE: "失败，疑似触发活动限制" # 风控触发词匹配
+          RISK_PAUSE_SECONDS: "600"           # 一旦触发风控，脚本原地卡住休息 10 分钟 (600秒)
+          MAX_RISK_PAUSES: "2"                # 整个批次最多允许风控熔断暂停 2 次
+          ENABLE_FAILURE_EXIT: "false"        # 某个账号失败时是否让整个 GitHub 工作流报错报错
           
-          echo "🚀 这台独立机器分配到的账号序号: ${ACCOUNT_INDEX}"
-          
-          python h3/script.py "$USERNAME" "$PASSWORD" "false"
+          # 任务管理标识 (用于报表汇总)
+          GROUP_NAME: "Batch_Runner_Group"
+          GROUP_NUMBER: "1"
+          RESULT_JSON_PATH: "result.json"
 
-      - name: 上传该机器的抽奖结果记录
-        uses: actions/upload-artifact@v4
+      - name: 生成抽奖汇总表
+        run: python h3/report.py .
+        env:
+          GENERATE_XLSX: "true"
+          OUTPUT_XLSX_PATH: "lottery-summary.xlsx"
+          NOTIFY_CHANNELS: ""
+          TELEGRAM_SEND_TEXT: "false"
+          TELEGRAM_SEND_XLSX: "false"
+
+      - name: 上传抽奖结果
         if: always()
-        with:
-          name: result-${{ matrix.account_index }}
-          path: result-${{ matrix.account_index }}.json
-          retention-days: 1
-
-  summary-report:
-    needs: lottery-matrix
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检查代码仓库
-        uses: actions/checkout@v4
-        
-      - name: 设置 Python 环境
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          
-      - name: 下载所有独立机器产生的结果文件
-        uses: actions/download-artifact@v4
-        with:
-          path: downloaded_results
-
-      - name: 执行合并脚本
-        run: |
-          pip install pandas openpyxl
-          if [ -f h3/merge_results.py ]; then
-            python h3/merge_results.py
-          fi
-          
-      - name: 上传最终的 Excel 总表
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: Final-Lottery-Report
-          path: "*.xlsx"
+          name: lottery-result
+          path: |
+            result.json
+            lottery-summary.xlsx
+          if-no-files-found: warn
           retention-days: 7

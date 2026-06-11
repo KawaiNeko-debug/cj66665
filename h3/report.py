@@ -10,8 +10,12 @@ from email.header import Header
 from email.mime.text import MIMEText
 
 import requests
+from dotenv import load_dotenv
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 for stream_name in ("stdout", "stderr"):
     stream = getattr(sys, stream_name, None)
@@ -29,6 +33,12 @@ except Exception:
     pass
 
 RISK_CONTROL_MESSAGE = os.getenv("RISK_CONTROL_MESSAGE", "抽奖失败，疑似触发活动限制").strip()
+
+STATUS_RED_FILL = PatternFill("solid", fgColor="F8696B")
+STATUS_BLUE_FILL = PatternFill("solid", fgColor="9DC3E6")
+FONT_GREEN = Font(color="008000")
+FONT_RED = Font(color="C00000")
+FONT_DARK = Font(color="000000")
 
 
 def truthy(value) -> bool:
@@ -99,12 +109,10 @@ def target_date_text(manifest: dict) -> str:
 
 def resolve_output_xlsx_path(results_dir: str, manifest: dict) -> str:
     filename = f"{target_date_text(manifest)}抽奖汇总.xlsx"
-    configured_path = os.getenv("OUTPUT_XLSX_PATH") or ""
+    configured_path = (os.getenv("OUTPUT_XLSX_PATH") or "").strip()
     if configured_path:
-        directory = os.path.dirname(configured_path) or results_dir
-    else:
-        directory = results_dir
-    return os.path.join(directory, filename)
+        return configured_path
+    return os.path.join(results_dir, filename)
 
 
 def find_json_files(results_dir: str) -> list[str]:
@@ -125,7 +133,6 @@ def record_key(record: dict):
     return None
 
 
-<<<<<<< HEAD
 def normalize_activity_records(value) -> dict:
     if not isinstance(value, dict):
         return {"lottery": []}
@@ -149,8 +156,6 @@ def normalize_activity_records(value) -> dict:
     return normalized
 
 
-=======
->>>>>>> parent of 33341dd (1)
 def normalize_record(record: dict, payload: dict, account_lookup: dict[tuple[int, int], str]) -> dict:
     group_number = safe_int(record.get("group_number", payload.get("group_number")), 0)
     account_index = safe_int(record.get("account_index"), 0)
@@ -179,11 +184,13 @@ def normalize_record(record: dict, payload: dict, account_lookup: dict[tuple[int
         "has_reward": truthy(record.get("has_reward")),
         "password_error": truthy(record.get("password_error")),
         "risk_controlled": risk_controlled,
+        "banned_account": truthy(record.get("banned_account")),
         "retry_count": safe_int(record.get("retry_count"), 0),
         "is_final_retry": truthy(record.get("is_final_retry")),
         "detail_reason": detail_reason,
         "sign_time": str(record.get("sign_time") or "").strip(),
         "sign_ip": str(record.get("sign_ip") or "").strip(),
+        "activity_records": normalize_activity_records(record.get("activity_records")),
     }
 
 
@@ -232,10 +239,7 @@ def build_missing_record(group_number: int, account_index: int, username: str) -
         "detail_reason": "缺少抽奖结果",
         "sign_time": "",
         "sign_ip": "",
-<<<<<<< HEAD
         "activity_records": {"lottery": []},
-=======
->>>>>>> parent of 33341dd (1)
     }
 
 
@@ -276,11 +280,8 @@ def merge_records_with_expected(records: list[dict], account_lookup: dict[tuple[
 
 def status_label(record: dict) -> str:
     raw_status = str(record.get("sign_status") or "")
-<<<<<<< HEAD
     if truthy(record.get("banned_account")):
         return "账号封禁"
-=======
->>>>>>> parent of 33341dd (1)
     if truthy(record.get("risk_controlled")):
         return "抽奖风控"
     if truthy(record.get("sign_success")):
@@ -302,18 +303,14 @@ def detail_reason(record: dict) -> str:
 
 
 def detail_text(record: dict) -> str:
-<<<<<<< HEAD
     if truthy(record.get("banned_account")):
         return str(record.get("detail_reason") or "账号在封禁列表中，已跳过抽奖").strip()
-=======
->>>>>>> parent of 33341dd (1)
     if truthy(record.get("sign_success")):
         return str(record.get("sign_status") or "抽奖成功").strip()
     return detail_reason(record)
 
 
 def is_problem_record(record: dict) -> bool:
-<<<<<<< HEAD
     return status_sort_bucket(record) == 0
 
 
@@ -322,9 +319,6 @@ def status_sort_bucket(record: dict) -> int:
     if label in {"抽奖失败", "抽奖异常", "抽奖风控"}:
         return 0
     return 2
-=======
-    return not truthy(record.get("sign_success"))
->>>>>>> parent of 33341dd (1)
 
 
 def sort_records(records: list[dict]) -> list[dict]:
@@ -346,19 +340,12 @@ def format_percent(value: float) -> str:
 
 def build_summary(records: list[dict], expected_total: int) -> dict:
     total = expected_total or len(records)
-<<<<<<< HEAD
     success = sum(1 for item in records if status_label(item) == "抽奖成功")
     banned = sum(1 for item in records if status_label(item) == "账号封禁")
     next_day = 0
     risk = sum(1 for item in records if status_label(item) == "抽奖风控")
     failed = sum(1 for item in records if status_label(item) == "抽奖失败")
     abnormal = sum(1 for item in records if status_label(item) == "抽奖异常")
-=======
-    success = sum(1 for item in records if truthy(item.get("sign_success")))
-    risk = sum(1 for item in records if status_label(item) == "签到风控")
-    failed = sum(1 for item in records if status_label(item) == "签到失败")
-    abnormal = sum(1 for item in records if status_label(item) == "签到异常")
->>>>>>> parent of 33341dd (1)
     reward = sum(safe_float(item.get("points_reward"), 0.0) for item in records)
     success_rate = (success / total * 100) if total > 0 else 0.0
     return {
@@ -377,12 +364,8 @@ def build_stats_lines(summary: dict) -> list[str]:
     return [
         "📈 总体统计",
         f"  ├── 总账号数: {summary['total']}",
-<<<<<<< HEAD
         f"  ├── 抽奖成功: {summary['success']}/{summary['total']}",
         f"  ├── 账号封禁: {summary['banned']}",
-=======
-        f"  ├── 签到成功: {summary['success']}/{summary['total']}",
->>>>>>> parent of 33341dd (1)
         f"  ├── 总计获得 +{summary['reward']:.1f} 🌽",
         f"  └── 抽奖成功率: {format_percent(summary['success_rate'])}%",
     ]
@@ -427,7 +410,6 @@ def color_for_points(points: float):
 
 
 def font_for_status(label: str) -> Font:
-<<<<<<< HEAD
     if label in {"抽奖失败", "抽奖异常", "抽奖风控"}:
         return Font(color="FFFFFF", bold=True)
     if label == "账号封禁":
@@ -459,15 +441,11 @@ def lottery_columns(record: dict) -> list[str]:
         else:
             values.extend(["", ""])
     return values
-=======
-    return Font(color="008000" if label == "签到成功" else "C00000")
->>>>>>> parent of 33341dd (1)
 
 
 def write_xlsx(path: str, records: list[dict]):
     workbook = Workbook()
     sheet = workbook.active
-<<<<<<< HEAD
     sheet.title = "抽奖汇总"
     headers = [
         "序号",
@@ -485,10 +463,6 @@ def write_xlsx(path: str, records: list[dict]):
         "抽奖3",
         "过期时间",
     ]
-=======
-    sheet.title = "签到汇总"
-    headers = ["序号", "金豆数量", "账户", "组别", "签到情况", "详细原因", "签到时间", "签到IP"]
->>>>>>> parent of 33341dd (1)
     sheet.append(headers)
 
     header_fill = PatternFill("solid", fgColor="D9E2F3")
@@ -513,11 +487,7 @@ def write_xlsx(path: str, records: list[dict]):
             detail_text(record),
             str(record.get("sign_time") or ""),
             str(record.get("sign_ip") or ""),
-<<<<<<< HEAD
         ] + lottery_columns(record)
-=======
-        ]
->>>>>>> parent of 33341dd (1)
         sheet.append(row)
         row_index = sheet.max_row
         for cell in sheet[row_index]:
@@ -530,17 +500,13 @@ def write_xlsx(path: str, records: list[dict]):
         sheet.cell(row_index, 7).alignment = Alignment(horizontal="center", vertical="center")
         sheet.cell(row_index, 8).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         sheet.cell(row_index, 6).alignment = Alignment(vertical="center", wrap_text=True)
-<<<<<<< HEAD
         for column_index in range(9, 15):
             sheet.cell(row_index, column_index).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-=======
->>>>>>> parent of 33341dd (1)
         sheet.cell(row_index, 2).number_format = "0.0"
         fill = color_for_points(safe_float(record.get("final_points"), 0.0))
         if fill:
             sheet.cell(row_index, 2).fill = fill
         sheet.cell(row_index, 5).font = font_for_status(label)
-<<<<<<< HEAD
         for column_index in (10, 12, 14):
             sheet.cell(row_index, column_index).font = FONT_RED if sheet.cell(row_index, column_index).value else FONT_DARK
 
@@ -561,11 +527,6 @@ def write_xlsx(path: str, records: list[dict]):
         "M": 28,
         "N": 18,
     }
-=======
-
-    sheet.freeze_panes = "A2"
-    widths = {"A": 8, "B": 14, "C": 24, "D": 16, "E": 14, "F": 36, "G": 14, "H": 18}
->>>>>>> parent of 33341dd (1)
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
 

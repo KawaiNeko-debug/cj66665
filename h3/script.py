@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeoutError
 from fake_useragent import UserAgent
+from dotenv import load_dotenv
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 # 统一东八区时间
 os.environ.setdefault("TZ", "Asia/Shanghai")
@@ -62,33 +66,16 @@ LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
 DEFAULT_LOTTERY_ACTIVITY_CODE = os.getenv("LOTTERY_ACTIVITY_CODE", "LAKU")
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
-REQUIRED_ENV_VARS = [
-    "BASE_URL", "PASSPORT_URL", "REFERER", 
-    "SLIDER_ID", "WRAPPER_ID", 
-    "HEADER_CLIENT_TYPE", "HEADER_ACCESS_TOKEN", "TOKEN_KEY"
+# 检查必要变量
+required_vars = [
+    BASE_URL, PASSPORT_URL, REFERER,
+    SLIDER_ID, WRAPPER_ID,
+    HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY
 ]
-
-missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
-
-
-def log(param):
-    pass
-
-
-if missing_vars:
-    log(f"❌ 启动失败！检测到以下环境变量未在 GitHub Secrets 中配置: {', '.join(missing_vars)}")
-    log("👉 请去 GitHub -> Settings -> Secrets 中检查这些变量的拼写是否完全正确（包括大小写）。")
-    sys.exit(1) # 强制终止，不再往下跑
-
-# 读取配置
-BASE_URL = os.getenv('BASE_URL')
-PASSPORT_URL = os.getenv('PASSPORT_URL')
-REFERER = os.getenv('REFERER')
-SLIDER_ID = os.getenv('SLIDER_ID')
-WRAPPER_ID = os.getenv('WRAPPER_ID')
-HEADER_CLIENT_TYPE = os.getenv('HEADER_CLIENT_TYPE')
-HEADER_ACCESS_TOKEN = os.getenv('HEADER_ACCESS_TOKEN')
-TOKEN_KEY = os.getenv('TOKEN_KEY')
+if not all(required_vars):
+    print("? 缺少必要环境变量，请检查以下变量是否全部设置：")
+    print("BASE_URL, PASSPORT_URL, REFERER, SLIDER_ID, WRAPPER_ID, HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY")
+    sys.exit(1)
 
 parsed_base = urlparse(BASE_URL)
 HOST = parsed_base.netloc
@@ -113,12 +100,6 @@ def truthy(v) -> bool:
 def safe_int(v, default=0) -> int:
     try:
         return int(str(v).strip())
-    except Exception:
-        return default
-
-def safe_float(v, default=0.0) -> float:
-    try:
-        return float(str(v).strip())
     except Exception:
         return default
 
@@ -374,13 +355,12 @@ def log(msg):
         summary_logs.append(msg)
 
 def mask_account(account):
-    """【已修改】：只保留前3位，其余全部打码为星号"""
     if account is None:
         return ""
     s = str(account)
-    if len(s) <= 3:
-        return "***"
-    return "***" + s[3:]
+    if len(s) <= 4:
+        return "*" * len(s)
+    return s[:-4] + "****"
 
 def current_time_text() -> str:
     return datetime.now().strftime("%H:%M:%S")
@@ -428,7 +408,7 @@ def get_public_ip() -> str:
     return ip_value
 
 def finalize_result_metadata(result: dict):
-    result["sign_time"] = str(result.get("sign_completed_at") or result.get("sign_time") or current_time_text()).strip()
+    result["sign_time"] = str(result.get("sign_time") or current_time_text()).strip()
     result["sign_ip"] = str(result.get("sign_ip") or get_public_ip()).strip()
     result["next_day_success"] = False
 
@@ -753,13 +733,13 @@ class ApiClient:
     @with_retry
     def get_points(self):
         data = self.get_json_retry1(
-            f"{self.base_url}{CUSTOMER_INTEGRAL_PATH}",
+            f"{self.base_url}/api/activity/front/getCustomerIntegral",
             tag="金豆",
             dump_body_on_error=True,
             dump_json_on_success_false=True
         )
         if data and data.get('success'):
-            return safe_float(data.get('data', {}).get('integralVoucher', 0), 0.0)
+            return data.get('data', {}).get('integralVoucher', 0)
 
         self._refresh_token()
         return None
@@ -922,7 +902,7 @@ class ApiClient:
         status = safe_int(detail.get("status"), 0)
         if exchange_max > 0 and exchange_num >= exchange_max:
             return False
-        return status in (0, 5)
+        return status == 5
 
     def exchange_lottery_chance_once(self) -> bool:
         data = self.post_json_retry1(
@@ -1496,7 +1476,7 @@ def write_results_json(path, all_results, total_accounts):
                 "password_error": r.get("password_error"),
                 "risk_controlled": r.get("risk_controlled"),
                 "banned_account": r.get("banned_account"),
-                "next_day_success": r.get("next_day_success"),
+                "next_day_success": False,
                 "task_start_date": r.get("task_start_date"),
                 "sign_completed_at": r.get("sign_completed_at"),
                 "retry_count": r.get("retry_count"),
@@ -1512,7 +1492,6 @@ def write_results_json(path, all_results, total_accounts):
             "batch_name": os.getenv('BATCH_NAME', ''),
             "group_name": group_name,
             "group_number": group_number,
-            "task_start_date": normalize_task_start_date(),
             "total_accounts": total_accounts,
             "results": sanitized,
         }
@@ -1568,7 +1547,7 @@ def main():
     if result_json_path:
         write_results_json(result_json_path, all_results, total)
 
-    failed_exists = any((not r['sign_success'] and not r.get('banned_account') and not r.get('password_error')) for r in all_results) or any(r.get('password_error') for r in all_results)
+    failed_exists = any(not r['sign_success'] and not r.get('password_error') for r in all_results) or any(r.get('password_error') for r in all_results)
     if enable_failure_exit and failed_exists:
         log("❌ 存在失败账号，退出码设为1")
         sys.exit(1)

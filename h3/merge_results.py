@@ -119,15 +119,16 @@ def main():
                 "has_reward": truthy(row.get("has_reward")),
                 "password_error": truthy(row.get("password_error")),
                 "risk_controlled": truthy(row.get("risk_controlled")),
+                "banned_account": truthy(row.get("banned_account")),
+                "next_day_success": False,
+                "task_start_date": row.get("task_start_date", ""),
+                "sign_completed_at": row.get("sign_completed_at", ""),
                 "retry_count": safe_int(row.get("retry_count"), 0),
                 "is_final_retry": truthy(row.get("is_final_retry")),
                 "detail_reason": row.get("detail_reason", ""),
                 "sign_time": row.get("sign_time", ""),
                 "sign_ip": row.get("sign_ip", ""),
-<<<<<<< HEAD
                 "activity_records": row.get("activity_records") or {"lottery": []},
-=======
->>>>>>> parent of 33341dd (1)
             }
         )
 
