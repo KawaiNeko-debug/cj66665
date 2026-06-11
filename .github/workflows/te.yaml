@@ -1,0 +1,26 @@
+run: |
+          echo "=== 🕵️ 开始精准排查 Secret 是否注入成功 ==="
+          [ -z "$BASE_URL" ] && echo "❌ 缺少 BASE_URL" || echo "✅ BASE_URL 正常"
+          [ -z "$PASSPORT_URL" ] && echo "❌ 缺少 PASSPORT_URL" || echo "✅ PASSPORT_URL 正常"
+          [ -z "$REFERER" ] && echo "❌ 缺少 REFERER" || echo "✅ REFERER 正常"
+          [ -z "$SLIDER_ID" ] && echo "❌ 缺少 SLIDER_ID" || echo "✅ SLIDER_ID 正常"
+          [ -z "$WRAPPER_ID" ] && echo "❌ 缺少 WRAPPER_ID" || echo "✅ WRAPPER_ID 正常"
+          [ -z "$HEADER_CLIENT_TYPE" ] && echo "❌ 缺少 HEADER_CLIENT_TYPE" || echo "✅ HEADER_CLIENT_TYPE 正常"
+          [ -z "$HEADER_ACCESS_TOKEN" ] && echo "❌ 缺少 HEADER_ACCESS_TOKEN" || echo "✅ HEADER_ACCESS_TOKEN 正常"
+          [ -z "$TOKEN_KEY" ] && echo "❌ 缺少 TOKEN_KEY" || echo "✅ TOKEN_KEY 正常"
+          echo "=========================================="
+          
+          echo "$ACCOUNTS" > accounts.txt
+          ACCOUNT_LINE=$(sed '/^$/d' accounts.txt | sed -n "${ACCOUNT_INDEX}p")
+          
+          if [ -z "$ACCOUNT_LINE" ]; then
+            echo "未找到序号为 ${ACCOUNT_INDEX} 的账号，自动跳过该机器。"
+            exit 0
+          fi
+          
+          USERNAME=$(echo "$ACCOUNT_LINE" | cut -d',' -f1 | xargs)
+          PASSWORD=$(echo "$ACCOUNT_LINE" | cut -d',' -f2 | xargs)
+          
+          echo "🚀 这台独立机器分配到的账号序号: ${ACCOUNT_INDEX}"
+          
+          python h3/script.py "$USERNAME" "$PASSWORD" "false"
