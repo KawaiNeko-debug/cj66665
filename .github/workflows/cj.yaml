@@ -1,4 +1,4 @@
-name: 独立机器并发抽奖任务
+name: cj
 
 on:
   workflow_dispatch:
