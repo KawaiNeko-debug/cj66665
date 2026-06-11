@@ -1,13 +1,9 @@
-name: cj
+name: 独立机器并发抽奖任务
 
 on:
-  # 现在只能在 GitHub 网页端手动点击运行了
   workflow_dispatch:
 
 jobs:
-  # =========================================================
-  # 任务1：矩阵分配，为每个账号生成一台独立服务器
-  # =========================================================
   lottery-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -18,10 +14,10 @@ jobs:
 
     steps:
       - name: 检查代码仓库
-        uses: actions/checkout@v4  # ✅ 已升级到 v4
+        uses: actions/checkout@v4
 
       - name: 设置 Python 环境
-        uses: actions/setup-python@v5  # ✅ 已升级到 v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -39,12 +35,20 @@ jobs:
 
       - name: 提取对应账号并执行抽奖
         env:
+          # ====================================================================
+          # 1. 隐私与敏感信息 (网址、账号、滑块特征已安全隔离)
+          # ====================================================================
           BASE_URL: ${{ secrets.BASE_URL }}
           PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
           REFERER: ${{ secrets.REFERER }}
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
           BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
+          SLIDER_ID: ${{ secrets.SLIDER_ID }}
+          WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
           
+          # ====================================================================
+          # 2. 抽奖与风控核心配置 (纯数字/通用字母，无平台特征)
+          # ====================================================================
           LOTTERY_ACTIVITY_CODE: "LAKU"
           LOTTERY_MAX_DRAWS: "3"
           LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
@@ -55,6 +59,19 @@ jobs:
           LOTTERY_DRAW_DELAY_MIN: "5"
           LOTTERY_DRAW_DELAY_MAX: "8"
           
+          # ====================================================================
+          # 3. 请求头固定配置 (平台特征字眼已安全隔离)
+          # ====================================================================
+          HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
+          HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
+          TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
+          TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+          HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
+          HEADER_SECRET_KEY: "secretkey" # 这个是通用词汇，无需打码
+          
+          # ====================================================================
+          # 4. 机器索引与文件路径
+          # ====================================================================
           ACCOUNT_INDEX: ${{ matrix.account_index }}
           RESULT_JSON_PATH: result-${{ matrix.account_index }}.json
         run: |
@@ -74,31 +91,28 @@ jobs:
           python h3/script.py "$USERNAME" "$PASSWORD" "false"
 
       - name: 上传该机器的抽奖结果记录
-        uses: actions/upload-artifact@v4  # ✅ 已升级到 v4
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: result-${{ matrix.account_index }}
           path: result-${{ matrix.account_index }}.json
           retention-days: 1
 
-  # =========================================================
-  # 任务2：等待所有机器跑完后，把结果汇总并生成报表
-  # =========================================================
   summary-report:
     needs: lottery-matrix
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: 检查代码仓库
-        uses: actions/checkout@v4  # ✅ 已升级到 v4
+        uses: actions/checkout@v4
         
       - name: 设置 Python 环境
-        uses: actions/setup-python@v5  # ✅ 已升级到 v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
       - name: 下载所有独立机器产生的结果文件
-        uses: actions/download-artifact@v4  # ✅ 已升级到 v4
+        uses: actions/download-artifact@v4
         with:
           path: downloaded_results
 
@@ -110,7 +124,7 @@ jobs:
           fi
           
       - name: 上传最终的 Excel 总表
-        uses: actions/upload-artifact@v4  # ✅ 已升级到 v4
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: Final-Lottery-Report
