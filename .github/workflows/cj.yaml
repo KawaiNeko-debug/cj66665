@@ -3,98 +3,512 @@ name: lottery-manual
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
+env:
+  TZ: Asia/Shanghai
+
 jobs:
-  run-lottery:
-    runs-on: ubuntu-latest
-
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      count: ${{ steps.prepare.outputs.count }}
+    env:
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
+      REFERER: ${{ secrets.REFERER }}
+      SLIDER_ID: ${{ secrets.SLIDER_ID }}
+      WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
+      HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
+      HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
+      HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
+      HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
+      TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
+      TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
     steps:
-      - name: 检查仓库代码
-        uses: actions/checkout@v3
+      - id: prepare
+        name: 检查 Secrets 并生成账号矩阵
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import random
 
-      - name: 设置 Python 环境
-        uses: actions/setup-python@v4
+          required = [
+              "ACCOUNTS",
+              "BASE_URL",
+              "PASSPORT_URL",
+              "REFERER",
+              "SLIDER_ID",
+              "WRAPPER_ID",
+              "HEADER_CLIENT_TYPE",
+              "HEADER_ACCESS_TOKEN",
+              "HEADER_ACCESS_TOKEN_FALLBACKS",
+              "HEADER_SECRET_KEY",
+              "TOKEN_KEY",
+              "TOKEN_ALTERNATIVE_KEYS",
+              "LOTTERY_ACTIVITY_CODE",
+          ]
+          missing = [name for name in required if not os.getenv(name, "").strip()]
+          if missing:
+              for name in missing:
+                  print(f"::error title=缺少 GitHub Secret::{name} 为空或未创建")
+              raise SystemExit(f"缺少 {len(missing)} 个必要 GitHub Secrets")
+
+          lines = [
+              line.strip()
+              for line in os.environ["ACCOUNTS"].splitlines()
+              if line.strip()
+          ]
+          if not lines:
+              print("::error title=账号配置错误::ACCOUNTS 中没有可用账号")
+              raise SystemExit(1)
+
+          invalid = []
+          for index, line in enumerate(lines, start=1):
+              if "," not in line:
+                  invalid.append(f"第 {index} 行缺少英文逗号")
+                  continue
+              username, password = line.split(",", 1)
+              if not username.strip() or not password.strip():
+                  invalid.append(f"第 {index} 行账号或密码为空")
+          if invalid:
+              for message in invalid:
+                  print(f"::error title=ACCOUNTS 格式错误::{message}")
+              raise SystemExit(f"ACCOUNTS 有 {len(invalid)} 行格式错误")
+
+          indexes = list(range(1, len(lines) + 1))
+          random.shuffle(indexes)
+          items = [
+              {"account_index": account_index, "execution_order": order}
+              for order, account_index in enumerate(indexes, start=1)
+          ]
+          matrix = {"include": items}
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, ensure_ascii=False)}\n")
+              output.write(f"count={len(lines)}\n")
+          print(f"账号总数: {len(lines)}")
+          print("随机执行顺序: " + ", ".join(map(str, indexes)))
+          PY
+
+  run:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      BASE_URL: ${{ secrets.BASE_URL }}
+      PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
+      REFERER: ${{ secrets.REFERER }}
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
+      SLIDER_ID: ${{ secrets.SLIDER_ID }}
+      WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
+      HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
+      HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
+      HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
+      HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
+      TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
+      TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
+      LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
+      LOTTERY_MAX_DRAWS: "3"
+      LOTTERY_SIGNUP_DELAY_MIN: "3"
+      LOTTERY_SIGNUP_DELAY_MAX: "5"
+      LOTTERY_EXCHANGE_DELAY_MIN: "3"
+      LOTTERY_EXCHANGE_DELAY_MAX: "5"
+      LOTTERY_DRAW_DELAY_MIN: "7"
+      LOTTERY_DRAW_DELAY_MAX: "10"
+      RISK_CONTROL_MESSAGE: "抽奖失败，疑似触发活动限制"
+      GROUP_NAME: lottery
+      GROUP_NUMBER: "1"
+      ACCOUNT_INDEX: ${{ matrix.account_index }}
+      EXECUTION_ORDER: ${{ matrix.execution_order }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: pip
 
-      - name: 安装项目依赖组件
+      - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          if [ -f h3/requirements.txt ]; then pip install -r h3/requirements.txt; fi
-          # 确保安装了 requests, playwright, fake-useragent 等基础库
-          pip install playwright requests fake-useragent
+          python -m pip install -r h3/requirements.txt
+          python -m playwright install --with-deps chromium
 
-      - name: 安装 Playwright 浏览器内核及系统依赖
+      - name: 选择当前账号
+        shell: bash
         run: |
-          # 必须安装 chromium 内核及运行所需的 Ubuntu 系统底层依赖
-          playwright install chromium
-          playwright install-deps chromium
+          python - <<'PY'
+          import os
 
-      - name: 启动自动化批量
-        run: python h3/batch_runner.py
+          lines = [
+              line.strip()
+              for line in os.environ["ACCOUNTS"].splitlines()
+              if line.strip()
+          ]
+          index = int(os.environ["ACCOUNT_INDEX"])
+          if index < 1 or index > len(lines):
+              print(
+                  f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内"
+              )
+              raise SystemExit(1)
+          username, password = lines[index - 1].split(",", 1)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write("ACCOUNT_USERNAME<<__ACCOUNT_USERNAME__\n")
+              env_file.write(username.strip() + "\n")
+              env_file.write("__ACCOUNT_USERNAME__\n")
+              env_file.write("ACCOUNT_PASSWORD<<__ACCOUNT_PASSWORD__\n")
+              env_file.write(password.strip() + "\n")
+              env_file.write("__ACCOUNT_PASSWORD__\n")
+          print(
+              f"已选择账号序号 {index}，执行顺序 "
+              f"{os.environ.get('EXECUTION_ORDER', '')}"
+          )
+          PY
+
+      - id: lottery
+        name: 执行单账号抽奖
         env:
-          # ====================================================================
-          # 1. 隐私与敏感信息 (安全读取 GitHub Secrets，绝对保密)
-          # ====================================================================
-          BASE_URL: ${{ secrets.BASE_URL }}
-          PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
-          REFERER: ${{ secrets.REFERER }}
-          ACCOUNTS: ${{ secrets.ACCOUNTS }}
-          BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
-          SLIDER_ID: ${{ secrets.SLIDER_ID }}
-          WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
-          HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
-          HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
-          HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
-          HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
-          TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
-          TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          
-          # ====================================================================
-          # 2. 与风控核心配置 (明文展示，允许随时在线修改)
-          # ====================================================================
-          # 活动标识与频率限制
-          LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
-          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"  # 每个账号最多尝试兑换几次机会
-          LOTTERY_MAX_DRAWS: "3"              # 每个账号最多执行几次动作
-          
-          # 拟人化随机延迟设置 (单位：秒)
-          LOTTERY_SIGNUP_DELAY_MIN: "3"       # 报名活动之间的最小间隔
-          LOTTERY_SIGNUP_DELAY_MAX: "5"       # 报名活动之间的最大间隔
-          LOTTERY_EXCHANGE_DELAY_MIN: "3"     # 兑换机会之间的最小间隔
-          LOTTERY_EXCHANGE_DELAY_MAX: "5"     # 兑换机会之间的最大间隔
-          LOTTERY_DRAW_DELAY_MIN: "7"         # 每次点击的最小间隔 (推荐拉长防封号)
-          LOTTERY_DRAW_DELAY_MAX: "10"        # 每次点击的最大间隔
-          
-          # 自动化控制与防封号熔断机制
-          RISK_CONTROL_MESSAGE: "失败，疑似触发活动限制" # 风控触发词匹配
-          RISK_PAUSE_SECONDS: "600"           # 一旦触发风控，脚本原地卡住休息 10 分钟 (600秒)
-          MAX_RISK_PAUSES: "2"                # 整个批次最多允许风控熔断暂停 2 次
-          ENABLE_FAILURE_EXIT: "false"        # 某个账号失败时是否让整个 GitHub 工作流报错报错
-          
-          # 任务管理标识 (用于报表汇总)
-          GROUP_NAME: "Batch_Runner_Group"
-          GROUP_NUMBER: "1"
-          RESULT_JSON_PATH: "result.json"
+          RESULT_JSON_PATH: result.json
+        run: python h3/script.py "$ACCOUNT_USERNAME" "$ACCOUNT_PASSWORD" "false"
+
+      - name: 确保生成账号结果
+        if: always()
+        env:
+          LOTTERY_STEP_OUTCOME: ${{ steps.lottery.outcome }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+
+          path = "result.json"
+          if os.path.exists(path):
+              raise SystemExit(0)
+
+          account_index = int(os.getenv("ACCOUNT_INDEX", "0") or 0)
+          reason = (
+              "抽奖脚本未生成 result.json；"
+              f"GitHub 步骤状态={os.getenv('LOTTERY_STEP_OUTCOME', 'unknown')}"
+          )
+          payload = {
+              "generated_at": datetime.now().isoformat(),
+              "batch_name": os.getenv("GROUP_NAME", ""),
+              "group_name": os.getenv("GROUP_NAME", ""),
+              "group_number": int(os.getenv("GROUP_NUMBER", "0") or 0),
+              "total_accounts": 1,
+              "results": [{
+                  "account_index": account_index,
+                  "execution_order": int(
+                      os.getenv("EXECUTION_ORDER", "0") or 0
+                  ),
+                  "group_name": os.getenv("GROUP_NAME", ""),
+                  "group_number": int(os.getenv("GROUP_NUMBER", "0") or 0),
+                  "group_position": f"账号{account_index}",
+                  "sign_success": False,
+                  "sign_status": "抽奖脚本异常",
+                  "initial_points": 0.0,
+                  "final_points": 0.0,
+                  "points_reward": 0.0,
+                  "has_reward": False,
+                  "password_error": False,
+                  "risk_controlled": False,
+                  "banned_account": False,
+                  "retry_count": 0,
+                  "is_final_retry": False,
+                  "detail_reason": reason,
+                  "sign_time": "",
+                  "sign_ip": "",
+                  "activity_records": {"lottery": []},
+              }],
+          }
+          with open(path, "w", encoding="utf-8") as result_file:
+              json.dump(payload, result_file, ensure_ascii=False, indent=2)
+          print(f"::error title=账号 {account_index} 未生成结果::{reason}")
+          PY
+
+      - name: 上传单账号结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-result-${{ matrix.account_index }}
+          path: result.json
+          if-no-files-found: error
+          retention-days: 2
+
+  prepare-retry:
+    needs: [prepare, run]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.retry.outputs.matrix }}
+      has_failed: ${{ steps.retry.outputs.has_failed }}
+    steps:
+      - name: 下载首次结果
+        uses: actions/download-artifact@v4
+        with:
+          pattern: initial-result-*
+          path: initial-results
+
+      - id: retry
+        name: 生成重试矩阵
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob
+          import json
+          import os
+
+          failed = []
+          for path in glob.glob(
+              "initial-results/**/result.json",
+              recursive=True,
+          ):
+              try:
+                  with open(path, "r", encoding="utf-8") as result_file:
+                      payload = json.load(result_file)
+                  rows = payload.get("results") or []
+                  row = rows[0] if rows else {}
+              except Exception as exc:
+                  print(f"::warning title=结果读取失败::{path}: {exc}")
+                  continue
+              if (
+                  row
+                  and not row.get("sign_success")
+                  and not row.get("banned_account")
+                  and not row.get("password_error")
+              ):
+                  failed.append({
+                      "account_index": int(row.get("account_index", 0)),
+                      "execution_order": int(row.get("execution_order", 0)),
+                  })
+
+          failed.sort(key=lambda item: item["account_index"])
+          matrix = {"include": failed}
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps(matrix, ensure_ascii=False)}\n")
+              output.write(f"has_failed={'true' if failed else 'false'}\n")
+          print("需换新 runner 重试的账号: " + (
+              ", ".join(str(item["account_index"]) for item in failed)
+              if failed else "无"
+          ))
+          PY
+
+  retry:
+    needs: [prepare, prepare-retry]
+    if: needs.prepare-retry.outputs.has_failed == 'true'
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.prepare-retry.outputs.matrix) }}
+    env:
+      BASE_URL: ${{ secrets.BASE_URL }}
+      PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
+      REFERER: ${{ secrets.REFERER }}
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
+      SLIDER_ID: ${{ secrets.SLIDER_ID }}
+      WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
+      HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
+      HEADER_ACCESS_TOKEN: ${{ secrets.HEADER_ACCESS_TOKEN }}
+      HEADER_ACCESS_TOKEN_FALLBACKS: ${{ secrets.HEADER_ACCESS_TOKEN_FALLBACKS }}
+      HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
+      TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
+      TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+      LOTTERY_ACTIVITY_CODE: ${{ secrets.LOTTERY_ACTIVITY_CODE }}
+      LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
+      LOTTERY_MAX_DRAWS: "3"
+      LOTTERY_SIGNUP_DELAY_MIN: "3"
+      LOTTERY_SIGNUP_DELAY_MAX: "5"
+      LOTTERY_EXCHANGE_DELAY_MIN: "3"
+      LOTTERY_EXCHANGE_DELAY_MAX: "5"
+      LOTTERY_DRAW_DELAY_MIN: "7"
+      LOTTERY_DRAW_DELAY_MAX: "10"
+      RISK_CONTROL_MESSAGE: "抽奖失败，疑似触发活动限制"
+      GROUP_NAME: lottery
+      GROUP_NUMBER: "1"
+      ACCOUNT_INDEX: ${{ matrix.account_index }}
+      EXECUTION_ORDER: ${{ matrix.execution_order }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r h3/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: 选择重试账号
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+
+          lines = [
+              line.strip()
+              for line in os.environ["ACCOUNTS"].splitlines()
+              if line.strip()
+          ]
+          index = int(os.environ["ACCOUNT_INDEX"])
+          if index < 1 or index > len(lines):
+              print(
+                  f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内"
+              )
+              raise SystemExit(1)
+          username, password = lines[index - 1].split(",", 1)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write("ACCOUNT_USERNAME<<__ACCOUNT_USERNAME__\n")
+              env_file.write(username.strip() + "\n")
+              env_file.write("__ACCOUNT_USERNAME__\n")
+              env_file.write("ACCOUNT_PASSWORD<<__ACCOUNT_PASSWORD__\n")
+              env_file.write(password.strip() + "\n")
+              env_file.write("__ACCOUNT_PASSWORD__\n")
+          print(f"账号序号 {index} 将在新 runner 上重试")
+          PY
+
+      - id: lottery
+        name: 在新 runner 重试抽奖
+        env:
+          RESULT_JSON_PATH: result.json
+        run: python h3/script.py "$ACCOUNT_USERNAME" "$ACCOUNT_PASSWORD" "false"
+
+      - name: 确保生成重试结果
+        if: always()
+        env:
+          LOTTERY_STEP_OUTCOME: ${{ steps.lottery.outcome }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+
+          path = "result.json"
+          if os.path.exists(path):
+              raise SystemExit(0)
+
+          account_index = int(os.getenv("ACCOUNT_INDEX", "0") or 0)
+          reason = (
+              "新 runner 重试仍未生成 result.json；"
+              f"GitHub 步骤状态={os.getenv('LOTTERY_STEP_OUTCOME', 'unknown')}"
+          )
+          payload = {
+              "generated_at": datetime.now().isoformat(),
+              "batch_name": os.getenv("GROUP_NAME", ""),
+              "group_name": os.getenv("GROUP_NAME", ""),
+              "group_number": int(os.getenv("GROUP_NUMBER", "0") or 0),
+              "total_accounts": 1,
+              "results": [{
+                  "account_index": account_index,
+                  "execution_order": int(
+                      os.getenv("EXECUTION_ORDER", "0") or 0
+                  ),
+                  "group_name": os.getenv("GROUP_NAME", ""),
+                  "group_number": int(os.getenv("GROUP_NUMBER", "0") or 0),
+                  "group_position": f"账号{account_index}",
+                  "sign_success": False,
+                  "sign_status": "重试抽奖脚本异常",
+                  "initial_points": 0.0,
+                  "final_points": 0.0,
+                  "points_reward": 0.0,
+                  "has_reward": False,
+                  "password_error": False,
+                  "risk_controlled": False,
+                  "banned_account": False,
+                  "retry_count": 1,
+                  "is_final_retry": True,
+                  "detail_reason": reason,
+                  "sign_time": "",
+                  "sign_ip": "",
+                  "activity_records": {"lottery": []},
+              }],
+          }
+          with open(path, "w", encoding="utf-8") as result_file:
+              json.dump(payload, result_file, ensure_ascii=False, indent=2)
+          print(f"::error title=账号 {account_index} 重试无结果::{reason}")
+          PY
+
+      - name: 上传重试结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retry-result-${{ matrix.account_index }}
+          path: result.json
+          if-no-files-found: error
+          retention-days: 2
+
+  finalize:
+    needs: [prepare, run, prepare-retry, retry]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装汇总依赖
+        run: python -m pip install -r h3/requirements.txt
+
+      - name: 下载首次结果
+        uses: actions/download-artifact@v4
+        with:
+          pattern: initial-result-*
+          path: artifacts
+
+      - name: 下载重试结果
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: retry-result-*
+          path: artifacts
+
+      - name: 合并账号结果
+        run: python h3/merge_results.py artifacts merged/result.json
 
       - name: 生成抽奖汇总表
-        run: python h3/report.py .
         env:
+          ACCOUNTS_BATCH1: ${{ secrets.ACCOUNTS }}
           GENERATE_XLSX: "true"
-          OUTPUT_XLSX_PATH: "lottery-summary.xlsx"
+          OUTPUT_XLSX_PATH: merged/lottery-summary.xlsx
           NOTIFY_CHANNELS: ""
           TELEGRAM_SEND_TEXT: "false"
           TELEGRAM_SEND_XLSX: "false"
+        run: python h3/report.py merged
 
-      - name: 上传抽奖结果
+      - name: 上传最终结果
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lottery-result
           path: |
-            result.json
-            lottery-summary.xlsx
-          if-no-files-found: warn
+            merged/result.json
+            merged/lottery-summary.xlsx
+          if-no-files-found: error
           retention-days: 7

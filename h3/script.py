@@ -67,14 +67,22 @@ DEFAULT_LOTTERY_ACTIVITY_CODE = os.getenv("LOTTERY_ACTIVITY_CODE", "LAKU")
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
 # 检查必要变量
-required_vars = [
-    BASE_URL, PASSPORT_URL, REFERER,
-    SLIDER_ID, WRAPPER_ID,
-    HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY
-]
-if not all(required_vars):
-    print("? 缺少必要环境变量，请检查以下变量是否全部设置：")
-    print("BASE_URL, PASSPORT_URL, REFERER, SLIDER_ID, WRAPPER_ID, HEADER_CLIENT_TYPE, HEADER_ACCESS_TOKEN, TOKEN_KEY")
+required_vars = {
+    "BASE_URL": BASE_URL,
+    "PASSPORT_URL": PASSPORT_URL,
+    "REFERER": REFERER,
+    "SLIDER_ID": SLIDER_ID,
+    "WRAPPER_ID": WRAPPER_ID,
+    "HEADER_CLIENT_TYPE": HEADER_CLIENT_TYPE,
+    "HEADER_ACCESS_TOKEN": HEADER_ACCESS_TOKEN,
+    "TOKEN_KEY": TOKEN_KEY,
+}
+missing_vars = [name for name, value in required_vars.items() if not str(value or "").strip()]
+if missing_vars:
+    print("❌ 缺少必要环境变量 / GitHub Secret：")
+    for name in missing_vars:
+        print(f"  - {name}")
+    print("请在 GitHub Settings → Secrets and variables → Actions 中检查同名 Secret，或在本地 .env 中填写。")
     sys.exit(1)
 
 parsed_base = urlparse(BASE_URL)
@@ -1157,6 +1165,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             slider_ok = solve_slider_with_bezier(page)
             if not slider_ok:
                 result['sign_status'] = '滑块未通过'
+                result['detail_reason'] = f"登录滑块未通过：未能在页面中完成 {SLIDER_ID}"
                 return result
 
             # ===== 滑块完成后，监控密码错误7秒，同时等待首页 =====
@@ -1168,6 +1177,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                     log(f"账号{account_index} - ❌ 密码错误（滑块后检测）")
                     result['password_error'] = True
                     result['sign_status'] = '密码错误'
+                    result['detail_reason'] = '登录页提示账号或密码错误'
                     return result
 
                 try:
@@ -1230,10 +1240,15 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             else:
                 log(f"账号{account_index} - ❌ 未提取到 token")
                 result['sign_status'] = 'Token提取失败'
+                result['detail_reason'] = (
+                    f"登录成功后未从 localStorage({TOKEN_KEY}) 或请求头"
+                    f"({HEADER_ACCESS_TOKEN}) 中提取到 token"
+                )
 
         except Exception as e:
             log(f"账号{account_index} - ❌ 执行异常: {e}")
             result['sign_status'] = '执行异常'
+            result['detail_reason'] = f"{type(e).__name__}: {truncate_text(str(e), 500)}"
         finally:
             if context:
                 context.close()
