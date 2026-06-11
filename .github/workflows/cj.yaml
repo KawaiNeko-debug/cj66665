@@ -1,0 +1,76 @@
+name: cj
+
+on:
+  # 支持手动点击触发运行
+  workflow_dispatch:
+  # 支持定时触发（以下示例为每天上午 8:00 运行，可自行修改）
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  run-lottery:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检查仓库代码
+        uses: actions/checkout@v3
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装项目依赖组件
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f h3/requirements.txt ]; then pip install -r h3/requirements.txt; fi
+          # 确保安装了 requests, playwright, fake-useragent 等基础库
+          pip install playwright requests fake-useragent
+
+      - name: 安装 Playwright 浏览器内核及系统依赖
+        run: |
+          # 必须安装 chromium 内核及运行所需的 Ubuntu 系统底层依赖
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: 启动自动化批量
+        run: python h3/batch_runner.py
+        env:
+          # ====================================================================
+          # 1. 隐私与敏感信息 (安全读取 GitHub Secrets，绝对保密)
+          # ====================================================================
+          BASE_URL: ${{ secrets.BASE_URL }}
+          PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
+          REFERER: ${{ secrets.REFERER }}
+          ACCOUNTS: ${{ secrets.ACCOUNTS }}
+          BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          
+          # ====================================================================
+          # 2. 与风控核心配置 (明文展示，允许随时在线修改)
+          # ====================================================================
+          # 活动标识与频率限制
+          LOTTERY_ACTIVITY_CODE: "LAKU"
+          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"  # 每个账号最多尝试兑换几次机会
+          LOTTERY_MAX_DRAWS: "3"              # 每个账号最多执行几次动作
+          
+          # 拟人化随机延迟设置 (单位：秒)
+          LOTTERY_SIGNUP_DELAY_MIN: "3"       # 报名活动之间的最小间隔
+          LOTTERY_SIGNUP_DELAY_MAX: "5"       # 报名活动之间的最大间隔
+          LOTTERY_EXCHANGE_DELAY_MIN: "3"     # 兑换机会之间的最小间隔
+          LOTTERY_EXCHANGE_DELAY_MAX: "5"     # 兑换机会之间的最大间隔
+          LOTTERY_DRAW_DELAY_MIN: "7"         # 每次点击的最小间隔 (推荐拉长防封号)
+          LOTTERY_DRAW_DELAY_MAX: "10"        # 每次点击的最大间隔
+          
+          # 自动化控制与防封号熔断机制
+          RISK_CONTROL_MESSAGE: "失败，疑似触发活动限制" # 风控触发词匹配
+          RISK_PAUSE_SECONDS: "600"           # 一旦触发风控，脚本原地卡住休息 10 分钟 (600秒)
+          MAX_RISK_PAUSES: "2"                # 整个批次最多允许风控熔断暂停 2 次
+          ENABLE_FAILURE_EXIT: "false"        # 某个账号失败时是否让整个 GitHub 工作流报错报错
+          
+          # 任务管理标识 (用于报表汇总)
+          GROUP_NAME: "Batch_Runner_Group"
+          GROUP_NUMBER: "1"
+          RESULT_JSON_PATH: "result.json"

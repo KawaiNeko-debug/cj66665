@@ -1,0 +1,5 @@
+requests
+python-dotenv
+fake-useragent
+playwright
+openpyxl
