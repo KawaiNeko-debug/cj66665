@@ -107,7 +107,6 @@ jobs:
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       REFERER: ${{ secrets.REFERER }}
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
-      BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
       SLIDER_ID: ${{ secrets.SLIDER_ID }}
       WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
       HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
@@ -116,6 +115,19 @@ jobs:
       HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
       TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
       TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+      JLC_CLIENT_TYPE: ${{ secrets.JLC_CLIENT_TYPE }}
+      JLC_REFERER: ${{ secrets.JLC_REFERER }}
+      JLC_SECRET_KEY_VALUE: ${{ secrets.JLC_SECRET_KEY_VALUE }}
+      JLC_MP_VERSION: ${{ secrets.JLC_MP_VERSION }}
+      JLC_MP_ENV: ${{ secrets.JLC_MP_ENV }}
+      JLC_MP_APPID: ${{ secrets.JLC_MP_APPID }}
+      JLC_MP_PAGE_VERSION: ${{ secrets.JLC_MP_PAGE_VERSION }}
+      JLC_USER_AGENT: ${{ secrets.JLC_USER_AGENT }}
+      JLC_USE_HTTP2: ${{ secrets.JLC_USE_HTTP2 }}
+      JLC_ACCEPT_LANGUAGE: ${{ secrets.JLC_ACCEPT_LANGUAGE }}
+      BROWSER_VIEWPORT_WIDTH: ${{ secrets.BROWSER_VIEWPORT_WIDTH }}
+      BROWSER_VIEWPORT_HEIGHT: ${{ secrets.BROWSER_VIEWPORT_HEIGHT }}
+      BROWSER_DEVICE_SCALE_FACTOR: ${{ secrets.BROWSER_DEVICE_SCALE_FACTOR }}
       LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
       LOTTERY_MAX_DRAWS: "3"
       LOTTERY_SIGNUP_DELAY_MIN: "3"
@@ -224,7 +236,6 @@ jobs:
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
-                  "banned_account": False,
                   "retry_count": 0,
                   "is_final_retry": False,
                   "detail_reason": reason,
@@ -286,7 +297,6 @@ jobs:
               if (
                   row
                   and not row.get("sign_success")
-                  and not row.get("banned_account")
                   and not row.get("password_error")
               ):
                   failed.append({
@@ -318,7 +328,6 @@ jobs:
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       REFERER: ${{ secrets.REFERER }}
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
-      BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
       SLIDER_ID: ${{ secrets.SLIDER_ID }}
       WRAPPER_ID: ${{ secrets.WRAPPER_ID }}
       HEADER_CLIENT_TYPE: ${{ secrets.HEADER_CLIENT_TYPE }}
@@ -327,6 +336,19 @@ jobs:
       HEADER_SECRET_KEY: ${{ secrets.HEADER_SECRET_KEY }}
       TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
       TOKEN_ALTERNATIVE_KEYS: ${{ secrets.TOKEN_ALTERNATIVE_KEYS }}
+      JLC_CLIENT_TYPE: ${{ secrets.JLC_CLIENT_TYPE }}
+      JLC_REFERER: ${{ secrets.JLC_REFERER }}
+      JLC_SECRET_KEY_VALUE: ${{ secrets.JLC_SECRET_KEY_VALUE }}
+      JLC_MP_VERSION: ${{ secrets.JLC_MP_VERSION }}
+      JLC_MP_ENV: ${{ secrets.JLC_MP_ENV }}
+      JLC_MP_APPID: ${{ secrets.JLC_MP_APPID }}
+      JLC_MP_PAGE_VERSION: ${{ secrets.JLC_MP_PAGE_VERSION }}
+      JLC_USER_AGENT: ${{ secrets.JLC_USER_AGENT }}
+      JLC_USE_HTTP2: ${{ secrets.JLC_USE_HTTP2 }}
+      JLC_ACCEPT_LANGUAGE: ${{ secrets.JLC_ACCEPT_LANGUAGE }}
+      BROWSER_VIEWPORT_WIDTH: ${{ secrets.BROWSER_VIEWPORT_WIDTH }}
+      BROWSER_VIEWPORT_HEIGHT: ${{ secrets.BROWSER_VIEWPORT_HEIGHT }}
+      BROWSER_DEVICE_SCALE_FACTOR: ${{ secrets.BROWSER_DEVICE_SCALE_FACTOR }}
       LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
       LOTTERY_MAX_DRAWS: "3"
       LOTTERY_SIGNUP_DELAY_MIN: "3"
@@ -432,7 +454,6 @@ jobs:
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
-                  "banned_account": False,
                   "retry_count": 1,
                   "is_final_retry": True,
                   "detail_reason": reason,

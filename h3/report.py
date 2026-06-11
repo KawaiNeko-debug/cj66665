@@ -184,7 +184,6 @@ def normalize_record(record: dict, payload: dict, account_lookup: dict[tuple[int
         "has_reward": truthy(record.get("has_reward")),
         "password_error": truthy(record.get("password_error")),
         "risk_controlled": risk_controlled,
-        "banned_account": truthy(record.get("banned_account")),
         "retry_count": safe_int(record.get("retry_count"), 0),
         "is_final_retry": truthy(record.get("is_final_retry")),
         "detail_reason": detail_reason,
@@ -280,8 +279,6 @@ def merge_records_with_expected(records: list[dict], account_lookup: dict[tuple[
 
 def status_label(record: dict) -> str:
     raw_status = str(record.get("sign_status") or "")
-    if truthy(record.get("banned_account")):
-        return "账号封禁"
     if truthy(record.get("risk_controlled")):
         return "抽奖风控"
     if truthy(record.get("sign_success")):
@@ -303,8 +300,6 @@ def detail_reason(record: dict) -> str:
 
 
 def detail_text(record: dict) -> str:
-    if truthy(record.get("banned_account")):
-        return str(record.get("detail_reason") or "账号在封禁列表中，已跳过抽奖").strip()
     if truthy(record.get("sign_success")):
         return str(record.get("sign_status") or "抽奖成功").strip()
     return detail_reason(record)
@@ -341,7 +336,6 @@ def format_percent(value: float) -> str:
 def build_summary(records: list[dict], expected_total: int) -> dict:
     total = expected_total or len(records)
     success = sum(1 for item in records if status_label(item) == "抽奖成功")
-    banned = sum(1 for item in records if status_label(item) == "账号封禁")
     next_day = 0
     risk = sum(1 for item in records if status_label(item) == "抽奖风控")
     failed = sum(1 for item in records if status_label(item) == "抽奖失败")
@@ -365,7 +359,6 @@ def build_stats_lines(summary: dict) -> list[str]:
         "📈 总体统计",
         f"  ├── 总账号数: {summary['total']}",
         f"  ├── 抽奖成功: {summary['success']}/{summary['total']}",
-        f"  ├── 账号封禁: {summary['banned']}",
         f"  ├── 总计获得 +{summary['reward']:.1f} 🌽",
         f"  └── 抽奖成功率: {format_percent(summary['success_rate'])}%",
     ]
@@ -412,8 +405,6 @@ def color_for_points(points: float):
 def font_for_status(label: str) -> Font:
     if label in {"抽奖失败", "抽奖异常", "抽奖风控"}:
         return Font(color="FFFFFF", bold=True)
-    if label == "账号封禁":
-        return Font(color="FFFFFF", bold=True)
     if label == "抽奖成功":
         return FONT_GREEN
     return FONT_DARK
@@ -422,8 +413,6 @@ def font_for_status(label: str) -> Font:
 def fill_for_status(label: str):
     if label in {"抽奖失败", "抽奖异常", "抽奖风控"}:
         return STATUS_RED_FILL
-    if label == "账号封禁":
-        return STATUS_BLUE_FILL
     return None
 
 

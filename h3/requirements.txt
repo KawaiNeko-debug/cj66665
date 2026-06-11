@@ -1,4 +1,5 @@
 requests
+httpx[http2]
 python-dotenv
 fake-useragent
 playwright

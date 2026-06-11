@@ -4,6 +4,10 @@ import time
 import random
 import json
 import requests
+try:
+    import httpx
+except Exception:
+    httpx = None
 import smtplib
 import threading
 import re
@@ -17,6 +21,13 @@ from dotenv import load_dotenv
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
+def env_first(*names, default=""):
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default
+
 # 统一东八区时间
 os.environ.setdefault("TZ", "Asia/Shanghai")
 try:
@@ -29,7 +40,18 @@ except Exception:
 # ==============================================================================
 BASE_URL = os.getenv('BASE_URL')
 PASSPORT_URL = os.getenv('PASSPORT_URL')
-REFERER = os.getenv('REFERER')
+JLC_CLIENT_TYPE = env_first("JLC_CLIENT_TYPE", "CLIENT_TYPE", default="MP-WEIXIN")
+JLC_MP_APPID = env_first("JLC_MP_APPID", "MP_APPID", default="wx6c7b851c877dba42")
+JLC_MP_PAGE_VERSION = env_first("JLC_MP_PAGE_VERSION", "MP_PAGE_VERSION", default="140")
+DEFAULT_MP_REFERER = f"https://servicewechat.com/{JLC_MP_APPID}/{JLC_MP_PAGE_VERSION}/page-frame.html"
+_JLC_REFERER_OVERRIDE = env_first("JLC_REFERER")
+_RAW_REFERER = env_first("REFERER")
+if _JLC_REFERER_OVERRIDE:
+    REFERER = _JLC_REFERER_OVERRIDE
+elif JLC_CLIENT_TYPE.upper() == "MP-WEIXIN" and (not _RAW_REFERER or "pages-promo/brand-campaign" in _RAW_REFERER):
+    REFERER = DEFAULT_MP_REFERER
+else:
+    REFERER = _RAW_REFERER or DEFAULT_MP_REFERER
 HEADER_ACCESS_TOKEN_FALLBACKS = [
     k.strip().lower()
     for k in os.getenv('HEADER_ACCESS_TOKEN_FALLBACKS', '').split(',')
@@ -44,6 +66,20 @@ HEADER_SECRET_KEY = os.getenv('HEADER_SECRET_KEY', 'secretkey')
 
 TOKEN_KEY = os.getenv('TOKEN_KEY')
 TOKEN_ALTERNATIVE_KEYS = [k.strip() for k in os.getenv('TOKEN_ALTERNATIVE_KEYS', '').split(',') if k.strip()]
+
+JLC_SECRET_KEY_VALUE = env_first("JLC_SECRET_KEY_VALUE", "SECRET_KEY_VALUE", "HEADER_SECRET_KEY_VALUE")
+JLC_MP_VERSION = env_first("JLC_MP_VERSION", "MP_VERSION", default="1.112.0")
+JLC_MP_ENV = env_first("JLC_MP_ENV", "MP_ENV", default="release")
+JLC_USER_AGENT = env_first("JLC_USER_AGENT", "USER_AGENT")
+JLC_ACCEPT_LANGUAGE = env_first("JLC_ACCEPT_LANGUAGE", "ACCEPT_LANGUAGE", default="zh-CN,zh;q=0.9")
+JLC_USE_HTTP2 = env_first("JLC_USE_HTTP2", "USE_HTTP2", default="true")
+MINI_PROGRAM_UA = (
+    "Mozilla/5.0 (Linux; Android 13; 23078RKD5C Build/TP1A.220624.014; wv) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
+    "Chrome/146.0.7680.178 Mobile Safari/537.36 XWEB/1460205 "
+    "MMWEBSDK/20260202 MMWEBID/5956 MicroMessenger/8.0.71.3080(0x28004750) "
+    "WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64 MiniProgramEnv/android"
+)
 
 ACTIVE_STATUS_PATH = "/api/sms/front/internal-message/active-status"
 LOGIN_API_PATH = "/api/cas/login/mobile/with-password"
@@ -104,6 +140,9 @@ def truthy(v) -> bool:
         return v != 0
     s = str(v).strip().lower()
     return s in ("1", "true", "yes", "y", "on")
+
+def is_mp_weixin_client() -> bool:
+    return str(JLC_CLIENT_TYPE or "").strip().upper() == "MP-WEIXIN"
 
 def safe_int(v, default=0) -> int:
     try:
@@ -171,33 +210,6 @@ def is_risk_control_response(data) -> bool:
         or "风险" in reason
         or "风控" in reason
     )
-
-def parse_banned_accounts(raw=None) -> set[str]:
-    raw = os.getenv("BANNED_ACCOUNTS", "") if raw is None else raw
-    if raw is None:
-        return set()
-    if isinstance(raw, (list, tuple, set)):
-        return {str(item).strip() for item in raw if str(item).strip()}
-
-    text = str(raw).strip()
-    if not text:
-        return set()
-
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, (list, tuple, set)):
-            return {str(item).strip() for item in parsed if str(item).strip()}
-        if isinstance(parsed, dict):
-            return {str(key).strip() for key, enabled in parsed.items() if truthy(enabled) and str(key).strip()}
-    except Exception:
-        pass
-
-    return {item.strip() for item in re.split(r"[,;\n\r]+", text) if item.strip()}
-
-def is_banned_account(username: str) -> bool:
-    banned = parse_banned_accounts()
-    username = str(username or "").strip()
-    return bool(username and username in banned)
 
 def current_date_text() -> str:
     return datetime.now().strftime("%Y-%m-%d")
@@ -357,6 +369,13 @@ def get_random_mobile_ua():
         except Exception:
             pass
     return "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.224 Mobile Safari/537.36"
+
+def get_runtime_user_agent():
+    if JLC_USER_AGENT:
+        return JLC_USER_AGENT
+    if is_mp_weixin_client():
+        return MINI_PROGRAM_UA
+    return get_random_mobile_ua()
 
 # --- 全局日志变量 ---
 in_summary = False
@@ -594,16 +613,30 @@ def extract_token_from_local_storage(page: Page):
 class ApiClient:
     def __init__(self, access_token, secretkey, account_index, page: Page, user_agent=None):
         self.base_url = BASE_URL
-        self.user_agent = user_agent or get_random_mobile_ua()
+        self.user_agent = user_agent or get_runtime_user_agent()
+        self.client_type = JLC_CLIENT_TYPE
+        effective_secretkey = JLC_SECRET_KEY_VALUE or secretkey
         self.headers = {
             'user-agent': self.user_agent,
-            HEADER_CLIENT_TYPE: 'WEB',
+            HEADER_CLIENT_TYPE: self.client_type,
             'accept': 'application/json, text/plain, */*',
+            'accept-language': JLC_ACCEPT_LANGUAGE,
+            'content-type': 'application/json',
             HEADER_ACCESS_TOKEN: access_token,
-            'Referer': REFERER,
+            'referer': REFERER,
         }
-        if secretkey:
-            self.headers[HEADER_SECRET_KEY] = secretkey
+        if effective_secretkey:
+            self.headers[HEADER_SECRET_KEY] = effective_secretkey
+        if is_mp_weixin_client():
+            self.headers.update({
+                'charset': 'utf-8',
+                'x-jlc-mp-version': JLC_MP_VERSION,
+                'x-jlc-mp-env': JLC_MP_ENV,
+                'x-jlc-mp-appid': JLC_MP_APPID,
+            })
+        self.http = None
+        if truthy(JLC_USE_HTTP2) and httpx is not None:
+            self.http = httpx.Client(http2=True, timeout=12)
 
         self.account_index = account_index
         self.page = page
@@ -618,11 +651,14 @@ class ApiClient:
         self.today_day = 0
         self.detail_reason = ""
         self.risk_controlled = False
-        self.banned_account = False
         self.sign_completed_at = ""
         self.activity_records = make_empty_extra_records()
         self.lottery_activity_code = DEFAULT_LOTTERY_ACTIVITY_CODE
         self.draw_results = []
+
+    def close(self):
+        if self.http:
+            self.http.close()
 
     def _mark_failure(self, status, raw=None, detail=""):
         reason = detail or build_detail_reason(raw, default=status)
@@ -649,7 +685,10 @@ class ApiClient:
 
     def _get_json_once(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True):
         try:
-            resp = requests.get(url, headers=self.headers, timeout=12)
+            if self.http:
+                resp = self.http.get(url, headers=self.headers)
+            else:
+                resp = requests.get(url, headers=self.headers, timeout=12)
 
             if resp.status_code != 200:
                 allow = resp.headers.get("Allow") or resp.headers.get("allow") or ""
@@ -688,9 +727,15 @@ class ApiClient:
             headers = dict(self.headers)
             headers.setdefault("content-type", "application/json;charset=UTF-8")
             if payload is None:
-                resp = requests.post(url, headers=headers, timeout=12)
+                if self.http:
+                    resp = self.http.post(url, headers=headers)
+                else:
+                    resp = requests.post(url, headers=headers, timeout=12)
             else:
-                resp = requests.post(url, headers=headers, json=payload, timeout=12)
+                if self.http:
+                    resp = self.http.post(url, headers=headers, json=payload)
+                else:
+                    resp = requests.post(url, headers=headers, json=payload, timeout=12)
 
             if resp.status_code != 200:
                 allow = resp.headers.get("Allow") or resp.headers.get("allow") or ""
@@ -962,7 +1007,7 @@ class ApiClient:
     def turn_lottery_once(self, draw_index: int) -> list[dict]:
         data = self.post_json_retry1(
             f"{self.base_url}{LOTTERY_TURN_PATH}",
-            payload={"clientType": "WEB", "activityCode": self.lottery_activity_code},
+            payload={"clientType": self.client_type, "activityCode": self.lottery_activity_code},
             tag=f"抽奖{draw_index}",
             dump_body_on_error=True,
             dump_json_on_success_false=True,
@@ -1025,16 +1070,6 @@ class ApiClient:
         self.detail_reason = "抽奖接口未返回可解析的 prizeList"
         return False
 
-    def execute_banned_process(self):
-        self.banned_account = True
-        points = self.get_points()
-        self.initial_points = points or 0.0
-        self.final_points = points or 0.0
-        self.points_reward = 0.0
-        self.sign_status = "账号封禁"
-        self.detail_reason = "账号在 BANNED_ACCOUNTS 中，已跳过抽奖"
-        return True
-
     def execute_full_process(self):
         return self.execute_lottery_process()
 
@@ -1045,9 +1080,6 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
     label = f" (重试{retry_count})" if retry_count > 0 else (" (最终重试)" if is_final_retry else "")
     log(f"开始处理账号 {account_index}/{total_accounts}{label}")
     task_start_date = normalize_task_start_date()
-    banned_account = is_banned_account(username)
-    if banned_account:
-        log(f"账号{account_index} - 命中 BANNED_ACCOUNTS，登录后只获取金豆数量，跳过抽奖")
 
     result = {
         'account_index': account_index,
@@ -1068,14 +1100,19 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'detail_reason': '',
         'sign_time': '',
         'sign_ip': '',
-        'banned_account': banned_account,
         'next_day_success': False,
         'task_start_date': task_start_date,
         'sign_completed_at': '',
         'activity_records': make_empty_extra_records(),
     }
 
-    ua_string = get_random_mobile_ua()
+    ua_string = get_runtime_user_agent()
+    default_width = 393 if is_mp_weixin_client() else 375
+    default_height = 873 if is_mp_weixin_client() else 812
+    default_scale = 2.75 if is_mp_weixin_client() else 2
+    viewport_width = safe_int(os.getenv("BROWSER_VIEWPORT_WIDTH"), default_width)
+    viewport_height = safe_int(os.getenv("BROWSER_VIEWPORT_HEIGHT"), default_height)
+    device_scale_factor = safe_float(os.getenv("BROWSER_DEVICE_SCALE_FACTOR"), default_scale)
 
     with sync_playwright() as p:
         browser = None
@@ -1092,10 +1129,10 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             )
             context = browser.new_context(
                 user_agent=ua_string,
-                viewport={'width': 375, 'height': 812},
+                viewport={'width': viewport_width, 'height': viewport_height},
                 locale='zh-CN',
                 timezone_id='Asia/Shanghai',
-                device_scale_factor=2,
+                device_scale_factor=device_scale_factor,
                 has_touch=True,
                 is_mobile=True,
             )
@@ -1104,6 +1141,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
                 Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh']});
                 window.chrome = {runtime: {}};
+                window.__wxjs_environment = 'miniprogram';
+                window.WeixinJSBridge = window.WeixinJSBridge || {};
             """)
 
             page = context.new_page()
@@ -1212,37 +1251,33 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 
             secretkey = secretkey_holder['value']
             result['token_extracted'] = bool(access_token)
-            result['secretkey_extracted'] = bool(secretkey)
+            result['secretkey_extracted'] = bool(secretkey or JLC_SECRET_KEY_VALUE)
 
             if access_token:
                 client = ApiClient(access_token, secretkey, account_index, page, user_agent=ua_string)
-                if banned_account:
-                    log(f"账号{account_index} - 封禁账号已登录，开始获取金豆数量")
-                    client.execute_banned_process()
-                    success = False
-                else:
-                    log(f"账号{account_index} - 使用 token 执行抽奖流程（报名、兑换、抽奖）")
-                    success = client.execute_full_process()
-                    if client.final_points == 0:
-                        latest_points = client.get_points()
-                        if latest_points is not None:
-                            client.final_points = latest_points
-                            client.points_reward = client.final_points - client.initial_points
+                log(f"账号{account_index} - API clientType={client.client_type}, referer={REFERER}")
+                log(f"账号{account_index} - 使用 token 执行抽奖流程（报名、兑换、抽奖）")
+                success = client.execute_full_process()
+                if client.final_points == 0:
+                    latest_points = client.get_points()
+                    if latest_points is not None:
+                        client.final_points = latest_points
+                        client.points_reward = client.final_points - client.initial_points
 
                 client.fetch_activity_records()
                 result.update({
                     'sign_success': success,
-                    'sign_status': '账号封禁' if banned_account else ('抽奖风控' if client.risk_controlled and not success else client.sign_status),
+                    'sign_status': '抽奖风控' if client.risk_controlled and not success else client.sign_status,
                     'initial_points': client.initial_points,
                     'final_points': client.final_points,
                     'points_reward': client.points_reward,
                     'has_reward': client.has_reward,
                     'risk_controlled': client.risk_controlled,
                     'detail_reason': client.detail_reason,
-                    'banned_account': banned_account,
                     'sign_completed_at': client.sign_completed_at,
                     'activity_records': client.activity_records,
                 })
+                client.close()
             else:
                 log(f"账号{account_index} - ❌ 未提取到 token")
                 result['sign_status'] = 'Token提取失败'
@@ -1269,8 +1304,6 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 # 重试逻辑与结果合并（保持不变）
 # ==============================================================================
 def should_retry(res):
-    if res.get('banned_account'):
-        return False
     if res.get('password_error'):
         return False
     return not res['sign_success']
@@ -1295,7 +1328,6 @@ def process_single_account(username, password, account_index, total_accounts):
         'detail_reason': '',
         'sign_time': '',
         'sign_ip': '',
-        'banned_account': is_banned_account(username),
         'next_day_success': False,
         'task_start_date': normalize_task_start_date(),
         'sign_completed_at': '',
@@ -1317,10 +1349,10 @@ def process_single_account(username, password, account_index, total_accounts):
             break
 
         if res['sign_success'] and not merged['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 merged[k] = res[k]
         elif not merged['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
                 merged[k] = res.get(k)
 
         merged['retry_count'] = res['retry_count']
@@ -1373,10 +1405,10 @@ def final_retry(all_results, usernames, passwords, total_accounts):
             continue
 
         if final['sign_success'] and not orig['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 orig[k] = final[k]
         elif not orig['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
                 orig[k] = final.get(k)
 
         orig.update({
@@ -1396,13 +1428,9 @@ def summarize_results(all_results):
     total_reward = 0
     reward_count = 0
     password_error = []
-    banned_accounts = []
     other_failed = []
 
     for r in all_results:
-        if r.get('banned_account'):
-            banned_accounts.append(r)
-            continue
         if r.get('sign_success'):
             success_count += 1
         else:
@@ -1424,7 +1452,6 @@ def summarize_results(all_results):
         "total_reward": total_reward,
         "reward_count": reward_count,
         "password_error": password_error,
-        "banned_accounts": banned_accounts,
         "other_failed": other_failed,
     }
 
@@ -1439,7 +1466,6 @@ def print_summary(all_results, total_accounts):
     success_count = summary["success_count"]
     reward_count = summary["reward_count"]
     password_error = summary["password_error"]
-    banned_accounts = summary["banned_accounts"]
     other_failed = summary["other_failed"]
 
     log("📈 总体统计:")
@@ -1451,10 +1477,6 @@ def print_summary(all_results, total_accounts):
 
     if reward_count > 0:
         log(f"  ✅ 有中奖记录账号数: {reward_count}")
-    if banned_accounts:
-        labels = [masked_label(r) for r in banned_accounts]
-        log(f"  ℹ️ 封禁跳过抽奖账号: {', '.join(labels)}")
-
     if not password_error and not other_failed:
         log("  🎉 所有账号抽奖流程正常!")
     else:
@@ -1496,7 +1518,6 @@ def write_results_json(path, all_results, total_accounts):
                 "has_reward": r.get("has_reward"),
                 "password_error": r.get("password_error"),
                 "risk_controlled": r.get("risk_controlled"),
-                "banned_account": r.get("banned_account"),
                 "next_day_success": False,
                 "task_start_date": r.get("task_start_date"),
                 "sign_completed_at": r.get("sign_completed_at"),

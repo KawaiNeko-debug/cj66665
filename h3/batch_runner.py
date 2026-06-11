@@ -105,7 +105,6 @@ def build_placeholder_result(account: dict, status="抽奖异常", reason="工�
         "has_reward": False,
         "password_error": False,
         "risk_controlled": False,
-        "banned_account": False,
         "next_day_success": False,
         "task_start_date": os.getenv("SIGN_TASK_START_DATE", ""),
         "sign_completed_at": "",
@@ -146,7 +145,6 @@ def normalize_result(account: dict, result_path: str) -> dict:
             "has_reward": truthy(raw.get("has_reward")),
             "password_error": truthy(raw.get("password_error")),
             "risk_controlled": truthy(raw.get("risk_controlled")),
-            "banned_account": truthy(raw.get("banned_account")),
             "next_day_success": truthy(raw.get("next_day_success")),
             "task_start_date": str(raw.get("task_start_date") or "").strip(),
             "sign_completed_at": str(raw.get("sign_completed_at") or "").strip(),
@@ -239,7 +237,6 @@ def write_batch_result(path: str, results: list[dict], controller: PauseControll
                 "has_reward": item["has_reward"],
                 "password_error": item["password_error"],
                 "risk_controlled": item["risk_controlled"],
-                "banned_account": item.get("banned_account", False),
                 "next_day_success": False,
                 "task_start_date": item.get("task_start_date", ""),
                 "sign_completed_at": item.get("sign_completed_at", ""),
@@ -272,14 +269,12 @@ def write_batch_result(path: str, results: list[dict], controller: PauseControll
 
 def print_summary(results: list[dict], controller: PauseController):
     success_count = sum(1 for item in results if item["sign_success"])
-    banned_count = sum(1 for item in results if item.get("banned_account"))
     risk_count = sum(1 for item in results if item["risk_controlled"] and not item["sign_success"])
-    failed_count = sum(1 for item in results if not item["sign_success"] and not item.get("banned_account"))
+    failed_count = sum(1 for item in results if not item["sign_success"])
     total_reward = sum(safe_float(item["points_reward"], 0.0) for item in results)
     log("=" * 60)
     log(f"批次总账号数: {len(results)}")
     log(f"抽奖成功: {success_count}")
-    log(f"账号封禁: {banned_count}")
     log(f"抽奖风控: {risk_count}")
     log(f"抽奖失败: {failed_count}")
     log(f"总奖励: +{total_reward:.1f} 金豆")
@@ -328,7 +323,7 @@ def main():
         print_summary(results, controller)
         generate_xlsx(result_json_path)
 
-        if enable_failure_exit and any(not item["sign_success"] and not item.get("banned_account") for item in results):
+        if enable_failure_exit and any(not item["sign_success"] for item in results):
             sys.exit(1)
         sys.exit(0)
     finally:
