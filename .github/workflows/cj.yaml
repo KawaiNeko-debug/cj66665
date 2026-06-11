@@ -1,18 +1,28 @@
 name: cj
 
 on:
-  # 支持手动点击触发运行
+  # 现在只能在 GitHub 网页端手动点击运行了
   workflow_dispatch:
-  # 支持定时触发（以下示例为每天上午 8:00 运行，可自行修改）
-  schedule:
-    - cron: '0 0 * * *'
 
 jobs:
-  run-lottery:
+  # =========================================================
+  # 任务1：矩阵分配，为每个账号生成一台独立服务器
+  # =========================================================
+  lottery-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      # 【核心1】控制并发数：无论你有多少个号，同时最多只有 3 台机器在跑
+      max-parallel: 3
+      # 【核心2】防连锁崩溃：某一个账号报错失败，不影响其他机器继续跑
+      fail-fast: false
+      matrix:
+        # 【核心3】这里填入你的账号序号。
+        # 比如你有 6 个账号，就写 [1, 2, 3, 4, 5, 6]
+        # 有 10 个就写 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        account_index: [1, 2, 3, 4, 5, 6]
 
     steps:
-      - name: 检查仓库代码
+      - name: 检查代码仓库
         uses: actions/checkout@v3
 
       - name: 设置 Python 环境
@@ -21,56 +31,103 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 安装项目依赖组件
+      - name: 安装项目依赖
         run: |
           python -m pip install --upgrade pip
           if [ -f h3/requirements.txt ]; then pip install -r h3/requirements.txt; fi
-          # 确保安装了 requests, playwright, fake-useragent 等基础库
           pip install playwright requests fake-useragent
 
-      - name: 安装 Playwright 浏览器内核及系统依赖
+      - name: 安装 Playwright 浏览器内核 (独立环境必需)
         run: |
-          # 必须安装 chromium 内核及运行所需的 Ubuntu 系统底层依赖
           playwright install chromium
           playwright install-deps chromium
 
-      - name: 启动自动化批量
-        run: python h3/batch_runner.py
+      - name: 提取对应账号并执行
         env:
-          # ====================================================================
-          # 1. 隐私与敏感信息 (安全读取 GitHub Secrets，绝对保密)
-          # ====================================================================
+          # 敏感信息
           BASE_URL: ${{ secrets.BASE_URL }}
           PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
           REFERER: ${{ secrets.REFERER }}
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
           BANNED_ACCOUNTS: ${{ secrets.BANNED_ACCOUNTS }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           
-          # ====================================================================
-          # 2. 与风控核心配置 (明文展示，允许随时在线修改)
-          # ====================================================================
-          # 活动标识与频率限制
+          # 与延迟参数 (因独立机器跑，延迟可适当放宽一点)
           LOTTERY_ACTIVITY_CODE: "LAKU"
-          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"  # 每个账号最多尝试兑换几次机会
-          LOTTERY_MAX_DRAWS: "3"              # 每个账号最多执行几次动作
+          LOTTERY_MAX_DRAWS: "3"
+          LOTTERY_EXCHANGE_MAX_ATTEMPTS: "3"
+          LOTTERY_SIGNUP_DELAY_MIN: "3"
+          LOTTERY_SIGNUP_DELAY_MAX: "5"
+          LOTTERY_EXCHANGE_DELAY_MIN: "3"
+          LOTTERY_EXCHANGE_DELAY_MAX: "5"
+          LOTTERY_DRAW_DELAY_MIN: "5"
+          LOTTERY_DRAW_DELAY_MAX: "8"
           
-          # 拟人化随机延迟设置 (单位：秒)
-          LOTTERY_SIGNUP_DELAY_MIN: "3"       # 报名活动之间的最小间隔
-          LOTTERY_SIGNUP_DELAY_MAX: "5"       # 报名活动之间的最大间隔
-          LOTTERY_EXCHANGE_DELAY_MIN: "3"     # 兑换机会之间的最小间隔
-          LOTTERY_EXCHANGE_DELAY_MAX: "5"     # 兑换机会之间的最大间隔
-          LOTTERY_DRAW_DELAY_MIN: "7"         # 每次点击的最小间隔 (推荐拉长防封号)
-          LOTTERY_DRAW_DELAY_MAX: "10"        # 每次点击的最大间隔
+          # 当前机器对应的序号和独立的结果文件路径
+          ACCOUNT_INDEX: ${{ matrix.account_index }}
+          RESULT_JSON_PATH: result-${{ matrix.account_index }}.json
+        run: |
+          # 1. 把 Secrets 里的多行账号列表写进临时文件
+          echo "$ACCOUNTS" > accounts.txt
           
-          # 自动化控制与防封号熔断机制
-          RISK_CONTROL_MESSAGE: "失败，疑似触发活动限制" # 风控触发词匹配
-          RISK_PAUSE_SECONDS: "600"           # 一旦触发风控，脚本原地卡住休息 10 分钟 (600秒)
-          MAX_RISK_PAUSES: "2"                # 整个批次最多允许风控熔断暂停 2 次
-          ENABLE_FAILURE_EXIT: "false"        # 某个账号失败时是否让整个 GitHub 工作流报错报错
+          # 2. 剔除空行后，精确读取第 N 行 (N就是当前的机器序号)
+          ACCOUNT_LINE=$(sed '/^$/d' accounts.txt | sed -n "${ACCOUNT_INDEX}p")
           
-          # 任务管理标识 (用于报表汇总)
-          GROUP_NAME: "Batch_Runner_Group"
-          GROUP_NUMBER: "1"
-          RESULT_JSON_PATH: "result.json"
+          # 判断该行是否有数据
+          if [ -z "$ACCOUNT_LINE" ]; then
+            echo "未找到序号为 ${ACCOUNT_INDEX} 的账号，自动跳过该机器。"
+            exit 0
+          fi
+          
+          # 3. 截取出用户名和密码
+          USERNAME=$(echo "$ACCOUNT_LINE" | cut -d',' -f1 | xargs)
+          PASSWORD=$(echo "$ACCOUNT_LINE" | cut -d',' -f2 | xargs)
+          
+          echo "🚀 这台独立机器分配到的账号序号: ${ACCOUNT_INDEX}"
+          
+          # 4. 直接调用单兵脚本 script.py，传入对应的账号密码
+          python h3/script.py "$USERNAME" "$PASSWORD" "false"
+
+      - name: 上传该机器的结果记录
+        uses: actions/upload-artifact@v3
+        if: always() # 无论成功失败都上传，方便后续合并汇总
+        with:
+          name: result-${{ matrix.account_index }}
+          path: result-${{ matrix.account_index }}.json
+          retention-days: 1
+
+  # =========================================================
+  # 任务2：等待所有机器跑完后，把结果汇总并生成报表
+  # =========================================================
+  summary-report:
+    needs: lottery-matrix
+    if: always() # 必须等上面的机器全部跑完才执行
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查代码仓库
+        uses: actions/checkout@v3
+        
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: 下载所有独立机器产生的结果文件
+        uses: actions/download-artifact@v3
+        with:
+          path: downloaded_results
+
+      - name: 执行合并脚本 (调用你原有的 merge_results.py)
+        run: |
+          pip install pandas openpyxl  # 安装处理 Excel 的依赖
+          # 这里调用你仓库里原有的合并汇总脚本，如果有差异请修改脚本名
+          if [ -f h3/merge_results.py ]; then
+            python h3/merge_results.py
+          fi
+          
+      - name: 上传最终的 Excel 总表
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: Final-Lottery-Report
+          path: "*.xlsx" # 根据你实际生成的 excel 路径调整
+          retention-days: 7
