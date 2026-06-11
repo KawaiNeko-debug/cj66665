@@ -8,7 +8,7 @@ import smtplib
 import threading
 import re
 from email.message import EmailMessage
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeoutError
 from fake_useragent import UserAgent
@@ -48,7 +48,6 @@ PASSWORD_ERROR_HINTS = ["账号或密码不正确", "请重新输入", "密码�
 # 首页元素（用于判断是否进入首页）
 HOME_SELECTOR = 'div.uni-tabbar__label:has-text("首页")'
 
-<<<<<<< HEAD
 # 抽奖相关接口
 CUSTOMER_INTEGRAL_PATH = "/api/activity/front/getCustomerIntegral"
 LOTTERY_WINS_PATH = "/api/cgi/operationService/front/lottery/queryWins"
@@ -62,11 +61,6 @@ LOTTERY_KEY_COUNT_PATH = "/api/cgi/operationService/front/lottery/getLuckyKeyCou
 LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
 DEFAULT_LOTTERY_ACTIVITY_CODE = os.getenv("LOTTERY_ACTIVITY_CODE", "LAKU")
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
-=======
-# 签到相关接口
-SIGN_CONFIG_PATH = "/api/activity/sign/getCurrentUserSignInConfig"
-RECEIVE_VOUCHER_PATH = "/api/activity/sign/receiveVoucher"
->>>>>>> parent of 33341dd (1)
 
 # 检查必要变量
 required_vars = [
@@ -102,6 +96,12 @@ def truthy(v) -> bool:
 def safe_int(v, default=0) -> int:
     try:
         return int(str(v).strip())
+    except Exception:
+        return default
+
+def safe_float(v, default=0.0) -> float:
+    try:
+        return float(str(v).strip())
     except Exception:
         return default
 
@@ -160,7 +160,6 @@ def is_risk_control_response(data) -> bool:
         or "风控" in reason
     )
 
-<<<<<<< HEAD
 def parse_banned_accounts(raw=None) -> set[str]:
     raw = os.getenv("BANNED_ACCOUNTS", "") if raw is None else raw
     if raw is None:
@@ -274,8 +273,6 @@ def apply_expiry_dates(records: list[dict], expiry_lookup: dict[str, str]):
 def make_empty_extra_records() -> dict:
     return {"lottery": []}
 
-=======
->>>>>>> parent of 33341dd (1)
 # ==============================================================================
 # 移动端 UA 池（至少数千条）
 # ==============================================================================
@@ -360,12 +357,13 @@ def log(msg):
         summary_logs.append(msg)
 
 def mask_account(account):
+    """【已修改】：只保留前3位，其余全部打码为星号"""
     if account is None:
         return ""
     s = str(account)
-    if len(s) <= 4:
-        return "*" * len(s)
-    return s[:-4] + "****"
+    if len(s) <= 3:
+        return "***"
+    return "***" + s[3:]
 
 def current_time_text() -> str:
     return datetime.now().strftime("%H:%M:%S")
@@ -413,12 +411,9 @@ def get_public_ip() -> str:
     return ip_value
 
 def finalize_result_metadata(result: dict):
-    result["sign_time"] = str(result.get("sign_time") or current_time_text()).strip()
+    result["sign_time"] = str(result.get("sign_completed_at") or result.get("sign_time") or current_time_text()).strip()
     result["sign_ip"] = str(result.get("sign_ip") or get_public_ip()).strip()
-<<<<<<< HEAD
     result["next_day_success"] = False
-=======
->>>>>>> parent of 33341dd (1)
 
 def masked_label(result):
     if result.get('masked_username'):
@@ -612,14 +607,11 @@ class ApiClient:
         self.today_day = 0
         self.detail_reason = ""
         self.risk_controlled = False
-<<<<<<< HEAD
         self.banned_account = False
         self.sign_completed_at = ""
         self.activity_records = make_empty_extra_records()
         self.lottery_activity_code = DEFAULT_LOTTERY_ACTIVITY_CODE
         self.draw_results = []
-=======
->>>>>>> parent of 33341dd (1)
 
     def _mark_failure(self, status, raw=None, detail=""):
         reason = detail or build_detail_reason(raw, default=status)
@@ -744,18 +736,17 @@ class ApiClient:
     @with_retry
     def get_points(self):
         data = self.get_json_retry1(
-            f"{self.base_url}/api/activity/front/getCustomerIntegral",
+            f"{self.base_url}{CUSTOMER_INTEGRAL_PATH}",
             tag="金豆",
             dump_body_on_error=True,
             dump_json_on_success_false=True
         )
         if data and data.get('success'):
-            return data.get('data', {}).get('integralVoucher', 0)
+            return safe_float(data.get('data', {}).get('integralVoucher', 0), 0.0)
 
         self._refresh_token()
         return None
 
-<<<<<<< HEAD
     def fetch_voucher_change_records(self) -> list[dict]:
         data = self.get_json_retry1(
             f"{self.base_url}{VOUCHER_CHANGE_RECORD_PATH}",
@@ -1035,202 +1026,6 @@ class ApiClient:
 
     def execute_full_process(self):
         return self.execute_lottery_process()
-=======
-    def get_sign_config(self):
-        url = f"{self.base_url}{SIGN_CONFIG_PATH}"
-        data = self.get_json_retry1(url, tag="签到配置", dump_body_on_error=True, dump_json_on_success_false=True)
-        if not (data and data.get("success")):
-            self._refresh_token()
-            data = self.get_json_retry1(url, tag="签到配置", dump_body_on_error=True, dump_json_on_success_false=True)
-
-        if not (data and data.get("success")):
-            return None
-
-        raw = data.get("data") or {}
-        have_signed = truthy(raw.get("haveSignIn")) or truthy(raw.get("haveSign"))
-        have_receive = truthy(raw.get("haveReceive"))
-        today_day = safe_int(raw.get("day"), 0)
-
-        self.today_day = today_day
-        log(f"账号{self.account_index} - 📅 签到配置解析：今天第 {today_day} 天，haveSignIn={have_signed}, haveReceive={have_receive}")
-        return have_signed, today_day, have_receive, data
-
-    def receive_voucher(self):
-        url = f"{self.base_url}{RECEIVE_VOUCHER_PATH}"
-        data = self.get_json_retry1(url, tag="领取奖励", dump_body_on_error=True, dump_json_on_success_false=True)
-
-        if data and data.get("success") and is_nonzero_reward_value(data.get("data")):
-            jindou = safe_int(data.get("data"), 0)
-            log(f"账号{self.account_index} - ✅ 奖励领取成功（+{jindou} 金豆）")
-            return True, jindou, data
-
-        if is_risk_control_response(data):
-            self._mark_failure("签到风控", raw=data)
-            return False
-        if data and data.get("success"):
-            log(f"账号{self.account_index} - ❌ 领取奖励接口 success=true 但 data 异常: {redact_sensitive(truncate_text(json.dumps(data, ensure_ascii=False), 2000))}")
-        else:
-            log(f"账号{self.account_index} - ❌ 奖励领取失败")
-        return False, 0, data
-
-    def sign_in_simple(self):
-        """
-        单纯做一次签到（只GET，失败重试一次）
-        用于：非第7天“领取成功后额外签到”、第7天“重复领取金豆”兜底补签
-        """
-        url = f"{self.base_url}{API_SIGN_PATH}"
-        log(f"账号{self.account_index} - 🧾 执行一次签到（只GET，失败重试一次）...")
-        data = self.get_json_retry1(url, tag="签到", dump_body_on_error=True, dump_json_on_success_false=True)
-        if data and data.get("success"):
-            self.sign_status = "签到成功"
-            log(f"账号{self.account_index} - ✅ 签到成功")
-            return True
-        self.sign_status = "签到失败"
-        log(f"账号{self.account_index} - ❌ 签到失败")
-        return False
-
-    def sign_in(self):
-        """
-        ✅ 修复点1：第一次就检查“未领取”，不再先重试签到
-        ✅ 修复点2：非第7天，领取成功后必须额外签到一次
-        """
-        url = f"{self.base_url}{API_SIGN_PATH}"
-        log(f"账号{self.account_index} - 尝试使用 GET 方法签到...")
-
-        # 第一次请求：先判断“未领取”
-        data1 = self._get_json_once(url, tag="签到", dump_body_on_error=True, dump_json_on_success_false=True)
-
-        if data1 and isinstance(data1, dict) and data1.get("success") is True:
-            self.sign_status = "签到成功"
-            log(f"账号{self.account_index} - ✅ 签到成功")
-            return True
-
-        if isinstance(data1, dict) and is_unclaimed_reward_error(data1):
-            log(f"账号{self.account_index} - 🎁 检测到“存在签到未领取”，开始领取奖励...")
-            ok, _jindou, raw = self.receive_voucher()
-            if ok:
-                self.has_reward = True
-                # 只要不是第7天：领取后再额外签到一次
-                if self.today_day != 7:
-                    log(f"账号{self.account_index} - ➕ 非第7天：领取奖励后需要额外签到一次")
-                    return self.sign_in_simple()
-                # 第7天：领取成功即完成（不再签到）
-                self.sign_status = "领取奖励成功"
-                return True
-
-            # 领取失败：第7天如果是“重复领取金豆” -> 额外签到一次
-            if isinstance(raw, dict) and is_duplicate_claim_error(raw):
-                log(f"账号{self.account_index} - ♻️ 领取返回“重复领取金豆”，改为额外执行一次签到")
-                return self.sign_in_simple()
-
-            self.sign_status = "领取奖励失败"
-            return False
-
-        # 不是“未领取”情况：才重试一次签到
-        time.sleep(random.uniform(0.6, 1.2))
-        log(f"账号{self.account_index} - 🔁 签到GET失败，重试一次GET...")
-        data2 = self._get_json_once(url, tag="签到", dump_body_on_error=True, dump_json_on_success_false=True)
-
-        if data2 and isinstance(data2, dict) and data2.get("success") is True:
-            self.sign_status = "签到成功"
-            log(f"账号{self.account_index} - ✅ 签到成功")
-            return True
-
-        # 重试后才出现“未领取”：也要处理（不再继续重试签到）
-        if isinstance(data2, dict) and is_unclaimed_reward_error(data2):
-            log(f"账号{self.account_index} - 🎁 重试后检测到“存在签到未领取”，开始领取奖励...")
-            ok, _jindou, raw = self.receive_voucher()
-            if ok:
-                self.has_reward = True
-                if self.today_day != 7:
-                    log(f"账号{self.account_index} - ➕ 非第7天：领取奖励后需要额外签到一次")
-                    return self.sign_in_simple()
-                self.sign_status = "领取奖励成功"
-                return True
-
-            if isinstance(raw, dict) and is_duplicate_claim_error(raw):
-                log(f"账号{self.account_index} - ♻️ 领取返回“重复领取金豆”，改为额外执行一次签到")
-                return self.sign_in_simple()
-
-            self.sign_status = "领取奖励失败"
-            return False
-
-        self.sign_status = "签到失败"
-        log(f"账号{self.account_index} - ❌ 签到失败")
-        return False
-
-    def execute_full_process(self):
-        time.sleep(random.uniform(1, 2))
-        self.initial_points = self.get_points() or 0
-        time.sleep(random.uniform(1, 2))
-
-        cfg = self.get_sign_config()
-        if cfg is None:
-            self.sign_status = "检查失败"
-            return False
-
-        have_signed, today_day, have_receive, _raw = cfg
-
-        # 第7天特殊逻辑：
-        # 1) 不信任 haveReceive，不用它判断是否已领
-        # 2) 如果配置显示已签到，则直接调用领奖接口
-        # 3) 如果未签到，则先签到；若接口提示“当前用户当天已经签到”，也直接转领奖
-        # 4) 如果领奖接口提示“重复领取金豆”，按“已经领取过”处理，算成功
-        if today_day == 7:
-            sign_url = f"{self.base_url}{API_SIGN_PATH}"
-            log(f"账号{self.account_index} - 🎯 今天第7天：已签到则直接领奖；未签到则先签到再领奖（忽略 haveReceive 判断）")
-
-            if have_signed:
-                log(f"账号{self.account_index} - ℹ️ 第7天配置显示今日已签到，直接调用领取奖励接口")
-            else:
-                sign_data = self.get_json_retry1(sign_url, tag="签到", dump_body_on_error=True, dump_json_on_success_false=True)
-                log(f"账号{self.account_index} - 🧩 第7天签到接口返回: {redact_sensitive(truncate_text(json.dumps(sign_data, ensure_ascii=False), 2000)) if sign_data is not None else 'null'}")
-
-                already_signed = isinstance(sign_data, dict) and ("当前用户当天已经签到" in str(sign_data.get("message") or ""))
-                if isinstance(sign_data, dict) and sign_data.get("success") is True:
-                    gain_num = get_sign_gain_num(sign_data)
-                    if is_nonzero_reward_value(gain_num):
-                        log(f"账号{self.account_index} - ✅ 第7天签到成功（gainNum={gain_num}）")
-                    else:
-                        log(f"账号{self.account_index} - ⚠️ 第7天签到返回 success=true，但 gainNum={gain_num}，继续尝试领取第7天奖励")
-                elif already_signed:
-                    log(f"账号{self.account_index} - ℹ️ 第7天签到接口提示“当前用户当天已经签到”，直接转领取奖励")
-                else:
-                    self.sign_status = "第7天签到失败"
-                    log(f"账号{self.account_index} - ❌ 第7天签到失败，且不是“当天已签到”场景")
-                    return False
-
-            ok, _jindou, raw = self.receive_voucher()
-            log(f"账号{self.account_index} - 🧩 第7天领取奖励接口返回: {redact_sensitive(truncate_text(json.dumps(raw, ensure_ascii=False), 2000)) if raw is not None else 'null'}")
-            if ok:
-                self.has_reward = True
-                self.sign_status = "第7天签到并领取成功"
-            elif isinstance(raw, dict) and is_duplicate_claim_error(raw):
-                self.has_reward = True
-                self.sign_status = "第7天奖励已领取"
-                log(f"账号{self.account_index} - ℹ️ 第7天领取接口提示“重复领取金豆”，按已领取处理")
-            else:
-                self.sign_status = "第7天领取奖励失败"
-                return False
-
-            time.sleep(random.uniform(1, 2))
-            self.final_points = self.get_points() or self.initial_points
-            self.points_reward = self.final_points - self.initial_points
-            return True
-
-        # 非第7天：如果已签到，结束；否则走 sign_in()（里面会处理未领取 -> 领取 -> 再签）
-        if have_signed:
-            self.sign_status = "已签到过"
-        else:
-            time.sleep(random.uniform(1, 2))
-            if not self.sign_in():
-                return False
-
-        time.sleep(random.uniform(1, 2))
-        self.final_points = self.get_points() or 0
-        self.points_reward = self.final_points - self.initial_points
-        return True
->>>>>>> parent of 33341dd (1)
 
 # ==============================================================================
 # 单个账号登录与抽奖主流程
@@ -1238,13 +1033,10 @@ class ApiClient:
 def sign_in_account(username, password, account_index, total_accounts, retry_count=0, is_final_retry=False):
     label = f" (重试{retry_count})" if retry_count > 0 else (" (最终重试)" if is_final_retry else "")
     log(f"开始处理账号 {account_index}/{total_accounts}{label}")
-<<<<<<< HEAD
     task_start_date = normalize_task_start_date()
     banned_account = is_banned_account(username)
     if banned_account:
         log(f"账号{account_index} - 命中 BANNED_ACCOUNTS，登录后只获取金豆数量，跳过抽奖")
-=======
->>>>>>> parent of 33341dd (1)
 
     result = {
         'account_index': account_index,
@@ -1265,6 +1057,11 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'detail_reason': '',
         'sign_time': '',
         'sign_ip': '',
+        'banned_account': banned_account,
+        'next_day_success': False,
+        'task_start_date': task_start_date,
+        'sign_completed_at': '',
+        'activity_records': make_empty_extra_records(),
     }
 
     ua_string = get_random_mobile_ua()
@@ -1405,9 +1202,7 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
             result['secretkey_extracted'] = bool(secretkey)
 
             if access_token:
-                log(f"账号{account_index} - 使用 token 进行签到（只GET；未领取先领；非第7天领完再签一次）")
                 client = ApiClient(access_token, secretkey, account_index, page, user_agent=ua_string)
-<<<<<<< HEAD
                 if banned_account:
                     log(f"账号{account_index} - 封禁账号已登录，开始获取金豆数量")
                     client.execute_banned_process()
@@ -1425,18 +1220,15 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                 result.update({
                     'sign_success': success,
                     'sign_status': '账号封禁' if banned_account else ('抽奖风控' if client.risk_controlled and not success else client.sign_status),
-=======
-                success = client.execute_full_process()
-                result.update({
-                    'sign_success': success,
-                    'sign_status': '签到风控' if client.risk_controlled and not success else client.sign_status,
->>>>>>> parent of 33341dd (1)
                     'initial_points': client.initial_points,
                     'final_points': client.final_points,
                     'points_reward': client.points_reward,
                     'has_reward': client.has_reward,
                     'risk_controlled': client.risk_controlled,
                     'detail_reason': client.detail_reason,
+                    'banned_account': banned_account,
+                    'sign_completed_at': client.sign_completed_at,
+                    'activity_records': client.activity_records,
                 })
             else:
                 log(f"账号{account_index} - ❌ 未提取到 token")
@@ -1459,6 +1251,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
 # 重试逻辑与结果合并（保持不变）
 # ==============================================================================
 def should_retry(res):
+    if res.get('banned_account'):
+        return False
     if res.get('password_error'):
         return False
     return not res['sign_success']
@@ -1483,6 +1277,11 @@ def process_single_account(username, password, account_index, total_accounts):
         'detail_reason': '',
         'sign_time': '',
         'sign_ip': '',
+        'banned_account': is_banned_account(username),
+        'next_day_success': False,
+        'task_start_date': normalize_task_start_date(),
+        'sign_completed_at': '',
+        'activity_records': make_empty_extra_records(),
     }
     max_retries = 3
     for attempt in range(max_retries + 1):
@@ -1496,13 +1295,14 @@ def process_single_account(username, password, account_index, total_accounts):
             merged['detail_reason'] = res.get('detail_reason') or '密码错误'
             merged['sign_time'] = res.get('sign_time', '')
             merged['sign_ip'] = res.get('sign_ip', '')
+            merged['activity_records'] = res.get('activity_records') or make_empty_extra_records()
             break
 
         if res['sign_success'] and not merged['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 merged[k] = res[k]
         elif not merged['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
                 merged[k] = res.get(k)
 
         merged['retry_count'] = res['retry_count']
@@ -1549,15 +1349,16 @@ def final_retry(all_results, usernames, passwords, total_accounts):
                 'detail_reason': final.get('detail_reason') or '密码错误',
                 'sign_time': final.get('sign_time', ''),
                 'sign_ip': final.get('sign_ip', ''),
+                'activity_records': final.get('activity_records') or orig.get('activity_records') or make_empty_extra_records(),
                 'is_final_retry': True
             })
             continue
 
         if final['sign_success'] and not orig['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 orig[k] = final[k]
         elif not orig['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'banned_account', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
                 orig[k] = final.get(k)
 
         orig.update({
@@ -1577,9 +1378,13 @@ def summarize_results(all_results):
     total_reward = 0
     reward_count = 0
     password_error = []
+    banned_accounts = []
     other_failed = []
 
     for r in all_results:
+        if r.get('banned_account'):
+            banned_accounts.append(r)
+            continue
         if r.get('sign_success'):
             success_count += 1
         else:
@@ -1601,6 +1406,7 @@ def summarize_results(all_results):
         "total_reward": total_reward,
         "reward_count": reward_count,
         "password_error": password_error,
+        "banned_accounts": banned_accounts,
         "other_failed": other_failed,
     }
 
@@ -1615,6 +1421,7 @@ def print_summary(all_results, total_accounts):
     success_count = summary["success_count"]
     reward_count = summary["reward_count"]
     password_error = summary["password_error"]
+    banned_accounts = summary["banned_accounts"]
     other_failed = summary["other_failed"]
 
     log("📈 总体统计:")
@@ -1625,14 +1432,10 @@ def print_summary(all_results, total_accounts):
     log(f"  └── 抽奖成功率: {success_rate:.1f}%")
 
     if reward_count > 0:
-<<<<<<< HEAD
         log(f"  ✅ 有中奖记录账号数: {reward_count}")
     if banned_accounts:
         labels = [masked_label(r) for r in banned_accounts]
         log(f"  ℹ️ 封禁跳过抽奖账号: {', '.join(labels)}")
-=======
-        log(f"  ✅ 有额外奖励账号数: {reward_count}")
->>>>>>> parent of 33341dd (1)
 
     if not password_error and not other_failed:
         log("  🎉 所有账号抽奖流程正常!")
@@ -1675,11 +1478,16 @@ def write_results_json(path, all_results, total_accounts):
                 "has_reward": r.get("has_reward"),
                 "password_error": r.get("password_error"),
                 "risk_controlled": r.get("risk_controlled"),
+                "banned_account": r.get("banned_account"),
+                "next_day_success": r.get("next_day_success"),
+                "task_start_date": r.get("task_start_date"),
+                "sign_completed_at": r.get("sign_completed_at"),
                 "retry_count": r.get("retry_count"),
                 "is_final_retry": r.get("is_final_retry"),
                 "detail_reason": r.get("detail_reason"),
                 "sign_time": r.get("sign_time"),
                 "sign_ip": r.get("sign_ip"),
+                "activity_records": r.get("activity_records") or make_empty_extra_records(),
             })
 
         payload = {
@@ -1687,6 +1495,7 @@ def write_results_json(path, all_results, total_accounts):
             "batch_name": os.getenv('BATCH_NAME', ''),
             "group_name": group_name,
             "group_number": group_number,
+            "task_start_date": normalize_task_start_date(),
             "total_accounts": total_accounts,
             "results": sanitized,
         }
@@ -1742,7 +1551,7 @@ def main():
     if result_json_path:
         write_results_json(result_json_path, all_results, total)
 
-    failed_exists = any(not r['sign_success'] and not r.get('password_error') for r in all_results) or any(r.get('password_error') for r in all_results)
+    failed_exists = any((not r['sign_success'] and not r.get('banned_account') and not r.get('password_error')) for r in all_results) or any(r.get('password_error') for r in all_results)
     if enable_failure_exit and failed_exists:
         log("❌ 存在失败账号，退出码设为1")
         sys.exit(1)
