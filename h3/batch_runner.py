@@ -271,13 +271,19 @@ def print_summary(results: list[dict], controller: PauseController):
     success_count = sum(1 for item in results if item["sign_success"])
     risk_count = sum(1 for item in results if item["risk_controlled"] and not item["sign_success"])
     failed_count = sum(1 for item in results if not item["sign_success"])
-    total_reward = sum(safe_float(item["points_reward"], 0.0) for item in results)
+    lottery_counts = [
+        len((item.get("activity_records") or {}).get("lottery") or [])
+        for item in results
+    ]
+    total_lottery_results = sum(lottery_counts)
+    prize_account_count = sum(1 for count in lottery_counts if count > 0)
     log("=" * 60)
     log(f"批次总账号数: {len(results)}")
     log(f"抽奖成功: {success_count}")
     log(f"抽奖风控: {risk_count}")
     log(f"抽奖失败: {failed_count}")
-    log(f"总奖励: +{total_reward:.1f} 金豆")
+    log(f"有中奖记录账号: {prize_account_count}")
+    log(f"抽奖结果总数: {total_lottery_results}")
     log(f"风控暂停次数: {controller.pause_count}/{controller.max_pauses}")
     log("=" * 60)
 

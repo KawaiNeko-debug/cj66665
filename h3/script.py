@@ -44,6 +44,7 @@ JLC_CLIENT_TYPE = env_first("JLC_CLIENT_TYPE", "CLIENT_TYPE", default="MP-WEIXIN
 JLC_MP_APPID = env_first("JLC_MP_APPID", "MP_APPID", default="wx6c7b851c877dba42")
 JLC_MP_PAGE_VERSION = env_first("JLC_MP_PAGE_VERSION", "MP_PAGE_VERSION", default="140")
 DEFAULT_MP_REFERER = f"https://servicewechat.com/{JLC_MP_APPID}/{JLC_MP_PAGE_VERSION}/page-frame.html"
+DEFAULT_MP_SECRET_KEY_VALUE = "62333335373634382d613039362d346439642d383935652d626666396162323664656136"
 _JLC_REFERER_OVERRIDE = env_first("JLC_REFERER")
 _RAW_REFERER = env_first("REFERER")
 if _JLC_REFERER_OVERRIDE:
@@ -67,7 +68,12 @@ HEADER_SECRET_KEY = os.getenv('HEADER_SECRET_KEY', 'secretkey')
 TOKEN_KEY = os.getenv('TOKEN_KEY')
 TOKEN_ALTERNATIVE_KEYS = [k.strip() for k in os.getenv('TOKEN_ALTERNATIVE_KEYS', '').split(',') if k.strip()]
 
-JLC_SECRET_KEY_VALUE = env_first("JLC_SECRET_KEY_VALUE", "SECRET_KEY_VALUE", "HEADER_SECRET_KEY_VALUE")
+JLC_SECRET_KEY_VALUE = env_first(
+    "JLC_SECRET_KEY_VALUE",
+    "SECRET_KEY_VALUE",
+    "HEADER_SECRET_KEY_VALUE",
+    default=DEFAULT_MP_SECRET_KEY_VALUE if JLC_CLIENT_TYPE.upper() == "MP-WEIXIN" else "",
+)
 JLC_MP_VERSION = env_first("JLC_MP_VERSION", "MP_VERSION", default="1.112.0")
 JLC_MP_ENV = env_first("JLC_MP_ENV", "MP_ENV", default="release")
 JLC_USER_AGENT = env_first("JLC_USER_AGENT", "USER_AGENT")
@@ -620,6 +626,7 @@ class ApiClient:
             'user-agent': self.user_agent,
             HEADER_CLIENT_TYPE: self.client_type,
             'accept': 'application/json, text/plain, */*',
+            'accept-encoding': 'gzip, deflate, br',
             'accept-language': JLC_ACCEPT_LANGUAGE,
             'content-type': 'application/json',
             HEADER_ACCESS_TOKEN: access_token,
@@ -1425,8 +1432,9 @@ def final_retry(all_results, usernames, passwords, total_accounts):
 
 def summarize_results(all_results):
     success_count = 0
-    total_reward = 0
     reward_count = 0
+    total_lottery_results = 0
+    prize_distribution = {}
     password_error = []
     other_failed = []
 
@@ -1439,18 +1447,25 @@ def summarize_results(all_results):
             else:
                 other_failed.append(r)
 
-        try:
-            total_reward += int(r.get('points_reward') or 0)
-        except Exception:
-            pass
-
-        if r.get('has_reward') and r.get('sign_success'):
+        lottery_rows = (r.get("activity_records") or {}).get("lottery") or []
+        parsed_titles = []
+        for item in lottery_rows:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("prizeTitle") or "").strip()
+            if not title:
+                continue
+            parsed_titles.append(title)
+            prize_distribution[title] = prize_distribution.get(title, 0) + 1
+        total_lottery_results += len(parsed_titles)
+        if parsed_titles and r.get('sign_success'):
             reward_count += 1
 
     return {
         "success_count": success_count,
-        "total_reward": total_reward,
         "reward_count": reward_count,
+        "total_lottery_results": total_lottery_results,
+        "prize_distribution": dict(sorted(prize_distribution.items(), key=lambda item: (-item[1], item[0]))),
         "password_error": password_error,
         "other_failed": other_failed,
     }
@@ -1465,6 +1480,8 @@ def print_summary(all_results, total_accounts):
     summary = summarize_results(all_results)
     success_count = summary["success_count"]
     reward_count = summary["reward_count"]
+    total_lottery_results = summary["total_lottery_results"]
+    prize_distribution = summary["prize_distribution"]
     password_error = summary["password_error"]
     other_failed = summary["other_failed"]
 
@@ -1477,6 +1494,11 @@ def print_summary(all_results, total_accounts):
 
     if reward_count > 0:
         log(f"  ✅ 有中奖记录账号数: {reward_count}")
+    log(f"  🎁 抽奖结果总数: {total_lottery_results}")
+    if prize_distribution:
+        log("  🎁 奖品分布:")
+        for title, count in prize_distribution.items():
+            log(f"    - {title}: {count}")
     if not password_error and not other_failed:
         log("  🎉 所有账号抽奖流程正常!")
     else:

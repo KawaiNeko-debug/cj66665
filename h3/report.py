@@ -321,7 +321,7 @@ def sort_records(records: list[dict]) -> list[dict]:
         records,
         key=lambda item: (
             0 if is_problem_record(item) else 1,
-            -safe_float(item.get("final_points"), 0.0),
+            -lottery_count(item),
             safe_int(item.get("group_number"), 999999),
             safe_int(item.get("account_index"), 999999),
             str(item.get("username") or ""),
@@ -333,14 +333,35 @@ def format_percent(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
+def lottery_items(record: dict) -> list[dict]:
+    activity = normalize_activity_records(record.get("activity_records"))
+    return [item for item in (activity.get("lottery") or []) if str(item.get("title") or "").strip()]
+
+
+def lottery_count(record: dict) -> int:
+    return len(lottery_items(record))
+
+
+def prize_distribution(records: list[dict]) -> dict[str, int]:
+    distribution = {}
+    for record in records:
+        for item in lottery_items(record):
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            distribution[title] = distribution.get(title, 0) + 1
+    return dict(sorted(distribution.items(), key=lambda item: (-item[1], item[0])))
+
+
 def build_summary(records: list[dict], expected_total: int) -> dict:
     total = expected_total or len(records)
     success = sum(1 for item in records if status_label(item) == "抽奖成功")
-    next_day = 0
     risk = sum(1 for item in records if status_label(item) == "抽奖风控")
     failed = sum(1 for item in records if status_label(item) == "抽奖失败")
     abnormal = sum(1 for item in records if status_label(item) == "抽奖异常")
-    reward = sum(safe_float(item.get("points_reward"), 0.0) for item in records)
+    total_lottery_results = sum(lottery_count(item) for item in records)
+    prize_accounts = sum(1 for item in records if lottery_count(item) > 0)
+    distribution = prize_distribution(records)
     success_rate = (success / total * 100) if total > 0 else 0.0
     return {
         "total": total,
@@ -349,19 +370,28 @@ def build_summary(records: list[dict], expected_total: int) -> dict:
         "failed": failed,
         "abnormal": abnormal,
         "problem_count": risk + failed + abnormal,
-        "reward": reward,
+        "total_lottery_results": total_lottery_results,
+        "prize_accounts": prize_accounts,
+        "prize_distribution": distribution,
         "success_rate": success_rate,
     }
 
 
 def build_stats_lines(summary: dict) -> list[str]:
-    return [
+    lines = [
         "📈 总体统计",
         f"  ├── 总账号数: {summary['total']}",
         f"  ├── 抽奖成功: {summary['success']}/{summary['total']}",
-        f"  ├── 总计获得 +{summary['reward']:.1f} 🌽",
+        f"  ├── 有中奖记录账号: {summary['prize_accounts']}",
+        f"  ├── 抽奖结果总数: {summary['total_lottery_results']}",
         f"  └── 抽奖成功率: {format_percent(summary['success_rate'])}%",
     ]
+    distribution = summary.get("prize_distribution") or {}
+    if distribution:
+        lines.append("🎁 奖品分布")
+        for title, count in distribution.items():
+            lines.append(f"  ├── {title}: {count}")
+    return lines
 
 
 def build_message(records: list[dict], manifest: dict, expected_total: int) -> tuple[str, dict]:
@@ -386,19 +416,13 @@ def build_message(records: list[dict], manifest: dict, expected_total: int) -> t
     return "\n".join(lines), summary
 
 
-def color_for_points(points: float):
-    if points > 2000:
-        return PatternFill("solid", fgColor="F8696B")
-    if points > 1000:
-        return PatternFill("solid", fgColor="FFD966")
-    if points > 500:
-        return PatternFill("solid", fgColor="9DC3E6")
-    if points < 200:
-        return PatternFill("solid", fgColor="C6E0B4")
-    if 200 <= points < 300:
-        return PatternFill("solid", fgColor="DAF2D0")
-    if 300 <= points <= 500:
-        return PatternFill("solid", fgColor="F4CCCC")
+def fill_for_lottery_count(count: int):
+    if count >= 3:
+        return PatternFill("solid", fgColor="D9EAD3")
+    if count == 2:
+        return PatternFill("solid", fgColor="E2F0D9")
+    if count == 1:
+        return PatternFill("solid", fgColor="FFF2CC")
     return None
 
 
@@ -438,7 +462,7 @@ def write_xlsx(path: str, records: list[dict]):
     sheet.title = "抽奖汇总"
     headers = [
         "序号",
-        "金豆数量",
+        "中奖数量",
         "账户",
         "组别",
         "抽奖情况",
@@ -469,7 +493,7 @@ def write_xlsx(path: str, records: list[dict]):
         label = status_label(record)
         row = [
             index,
-            safe_float(record.get("final_points"), 0.0),
+            lottery_count(record),
             str(record.get("username") or ""),
             str(record.get("group_position") or ""),
             label,
@@ -491,8 +515,8 @@ def write_xlsx(path: str, records: list[dict]):
         sheet.cell(row_index, 6).alignment = Alignment(vertical="center", wrap_text=True)
         for column_index in range(9, 15):
             sheet.cell(row_index, column_index).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        sheet.cell(row_index, 2).number_format = "0.0"
-        fill = color_for_points(safe_float(record.get("final_points"), 0.0))
+        sheet.cell(row_index, 2).number_format = "0"
+        fill = fill_for_lottery_count(lottery_count(record))
         if fill:
             sheet.cell(row_index, 2).fill = fill
         sheet.cell(row_index, 5).font = font_for_status(label)
@@ -544,6 +568,7 @@ def send_telegram_message(text: str) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
+        print("[telegram] skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is empty")
         return False
     ok = True
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -551,8 +576,10 @@ def send_telegram_message(text: str) -> bool:
         try:
             response = requests.post(url, json={"chat_id": chat_id, "text": part}, timeout=20)
             if response.status_code != 200:
+                print(f"[telegram] sendMessage failed: HTTP {response.status_code} {response.text[:500]}")
                 ok = False
-        except Exception:
+        except Exception as exc:
+            print(f"[telegram] sendMessage exception: {type(exc).__name__}: {exc}")
             ok = False
     return ok
 
@@ -560,7 +587,11 @@ def send_telegram_message(text: str) -> bool:
 def send_telegram_document(path: str) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id or not os.path.exists(path):
+    if not token or not chat_id:
+        print("[telegram] skipped document: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is empty")
+        return False
+    if not os.path.exists(path):
+        print(f"[telegram] skipped document: file not found: {path}")
         return False
     try:
         with open(path, "rb") as file:
@@ -570,8 +601,12 @@ def send_telegram_document(path: str) -> bool:
                 files={"document": (os.path.basename(path), file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 timeout=40,
             )
-        return response.status_code == 200
-    except Exception:
+        if response.status_code != 200:
+            print(f"[telegram] sendDocument failed: HTTP {response.status_code} {response.text[:500]}")
+            return False
+        return True
+    except Exception as exc:
+        print(f"[telegram] sendDocument exception: {type(exc).__name__}: {exc}")
         return False
 
 
@@ -628,6 +663,7 @@ def main():
     message, summary = build_message(records, manifest, expected_total)
 
     channels = parse_channels()
+    print(f"[notify] channels={','.join(channels) if channels else 'none'}")
     send_tg_text = is_enabled("TELEGRAM_SEND_TEXT", "true")
     send_tg_xlsx = is_enabled("TELEGRAM_SEND_XLSX", "true")
     generate_xlsx = send_tg_xlsx or is_enabled("GENERATE_XLSX", "false")

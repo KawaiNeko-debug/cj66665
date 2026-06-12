@@ -112,18 +112,18 @@ def normalize_records(data, source_path: str) -> list[dict]:
         idx = r.get("account_index")
         account_index = safe_int(idx, default=0) if idx is not None else 0
         sign_status = str(r.get("sign_status") or "").strip()
-        points_reward = safe_float(r.get("points_reward"), default=0.0)
         rec = {
             "account_index": account_index,
             "sign_success": truthy(r.get("sign_success")),
             "sign_status": sign_status,
             "initial_points": safe_float(r.get("initial_points"), default=0.0),
             "final_points": safe_float(r.get("final_points"), default=0.0),
-            "points_reward": points_reward,
+            "points_reward": safe_float(r.get("points_reward"), default=0.0),
             "has_reward": truthy(r.get("has_reward")),
             "password_error": truthy(r.get("password_error")),
             "retry_count": safe_int(r.get("retry_count"), default=0),
             "is_final_retry": truthy(r.get("is_final_retry")),
+            "activity_records": r.get("activity_records") or {"lottery": []},
             "_source": source_path,
             "_generated_at": payload_generated_at or parse_generated_at_ts({}, source_path),
         }
@@ -238,12 +238,25 @@ def build_message(group: str, total: int, results_by_index: dict[int, dict], acc
     failed_list = []
 
     success_count = 0
-    total_reward = 0.0
+    total_lottery_results = 0
+    prize_account_count = 0
+    distribution: dict[str, int] = {}
 
     def label_for(i: int) -> str:
         if 1 <= i <= len(account_labels):
             return account_labels[i - 1]
         return f"账号{i}"
+
+    def lottery_titles(record: dict) -> list[str]:
+        rows = (record.get("activity_records") or {}).get("lottery") or []
+        titles = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("prizeTitle") or "").strip()
+            if title:
+                titles.append(title)
+        return titles
 
     for i in range(1, total + 1):
         label = label_for(i)
@@ -254,12 +267,17 @@ def build_message(group: str, total: int, results_by_index: dict[int, dict], acc
             continue
 
         status = str(r.get("sign_status") or "未知")
-        reward = safe_float(r.get("points_reward"), 0.0)
+        titles = lottery_titles(r)
+        if titles:
+            prize_account_count += 1
+            total_lottery_results += len(titles)
+            for title_text in titles:
+                distribution[title_text] = distribution.get(title_text, 0) + 1
 
         if is_success_record(r):
             success_count += 1
-            total_reward += reward
-            success_list.append((label, status, reward))
+            prize_text = "、".join(titles) if titles else "未解析到奖品"
+            success_list.append((label, status, prize_text))
         else:
             failed_list.append((label, map_reason(r)))
 
@@ -276,8 +294,8 @@ def build_message(group: str, total: int, results_by_index: dict[int, dict], acc
     # -------- 再列成功 --------
     if success_list:
         lines.append("✅ 正常账户")
-        for label, status, reward in success_list:
-            lines.append(f"{label}：{status}（+{reward:.1f} 🌽）")
+        for label, status, prize_text in success_list:
+            lines.append(f"{label}：{status}（{prize_text}）")
         lines.append("")
     if failed_list:
         lines.append("❌ 出现异常的账户")
@@ -291,12 +309,18 @@ def build_message(group: str, total: int, results_by_index: dict[int, dict], acc
     lines.append("📈 总体统计")
     lines.append(f"  ├── 总账号数: {total}")
     lines.append(f"  ├── 抽奖成功: {success_count}/{total}")
-    lines.append(f"  ├── 总计获得 +{total_reward:.1f} 🌽")
+    lines.append(f"  ├── 有中奖记录账号: {prize_account_count}")
+    lines.append(f"  ├── 抽奖结果总数: {total_lottery_results}")
     lines.append(f"  └── 抽奖成功率: {success_rate:.1f}%")
+    if distribution:
+        lines.append("")
+        lines.append("🎁 奖品分布")
+        for title_text, count in sorted(distribution.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"  ├── {title_text}: {count}")
     lines.append("")
     lines.append("=" * 50)
 
-    return "\n".join(lines), len(failed_list), total_reward, False
+    return "\n".join(lines), len(failed_list), total_lottery_results, prize_account_count > 0
 
 def split_text(text: str, limit: int = 3900) -> list[str]:
     """
@@ -416,7 +440,7 @@ def main():
     if expected_total <= 0:
         expected_total = max(results_by_index.keys()) if results_by_index else 0
 
-    message, failed_count, total_reward, has_reward = build_message(
+    message, failed_count, total_lottery_results, has_reward = build_message(
         group=group,
         total=expected_total,
         results_by_index=results_by_index,
@@ -437,7 +461,11 @@ def main():
     if "email" in channels or "smtp" in channels:
         sent = send_email(subject, message) or sent
 
-    print(f"[summary] total={expected_total} failed={failed_count} reward=+{total_reward:.1f} extra_reward={'yes' if has_reward else 'no'} sent={'yes' if sent else 'no'}")
+    print(
+        f"[summary] total={expected_total} failed={failed_count} "
+        f"lottery_results={total_lottery_results} has_prize_record={'yes' if has_reward else 'no'} "
+        f"sent={'yes' if sent else 'no'}"
+    )
 
     # 可选：让汇总 job 根据失败数退出 1（默认不开）
     if truthy(os.getenv("FAIL_ON_FAILURE", "false")) and failed_count > 0:

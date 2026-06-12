@@ -43,13 +43,11 @@ jobs:
               "ACCOUNTS",
               "BASE_URL",
               "PASSPORT_URL",
-              "REFERER",
               "SLIDER_ID",
               "WRAPPER_ID",
               "HEADER_CLIENT_TYPE",
               "HEADER_ACCESS_TOKEN",
               "HEADER_ACCESS_TOKEN_FALLBACKS",
-              "HEADER_SECRET_KEY",
               "TOKEN_KEY",
               "TOKEN_ALTERNATIVE_KEYS",
           ]
@@ -514,9 +512,11 @@ jobs:
           ACCOUNTS_BATCH1: ${{ secrets.ACCOUNTS }}
           GENERATE_XLSX: "true"
           OUTPUT_XLSX_PATH: merged/lottery-summary.xlsx
-          NOTIFY_CHANNELS: ""
-          TELEGRAM_SEND_TEXT: "false"
-          TELEGRAM_SEND_XLSX: "false"
+          NOTIFY_CHANNELS: telegram
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_SEND_TEXT: "true"
+          TELEGRAM_SEND_XLSX: "true"
         run: python h3/report.py merged
 
       - name: 上传最终结果
