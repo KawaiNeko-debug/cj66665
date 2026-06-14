@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      max-parallel: 15
+      max-parallel: 20
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       BASE_URL: ${{ secrets.BASE_URL }}
