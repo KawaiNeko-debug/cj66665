@@ -26,7 +26,7 @@ jobs:
       matrix: ${{ steps.prepare.outputs.matrix }}
       count: ${{ steps.prepare.outputs.count }}
     env:
-      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      accounts2: ${{ secrets.accounts2 }}
     steps:
       - id: prepare
         name: 检查账号并生成随机矩阵
@@ -37,14 +37,14 @@ jobs:
           import os
           import random
 
-          accounts = os.getenv("ACCOUNTS", "").strip()
-          if not accounts:
-              print("::error title=缺少 GitHub Secret::ACCOUNTS 为空或未创建")
+          accounts2 = os.getenv("accounts2", "").strip()
+          if not accounts2:
+              print("::error title=缺少 GitHub Secret::accounts2 为空或未创建")
               raise SystemExit(1)
 
-          lines = [line.strip() for line in accounts.splitlines() if line.strip()]
+          lines = [line.strip() for line in accounts2.splitlines() if line.strip()]
           if not lines:
-              print("::error title=账号配置错误::ACCOUNTS 中没有可用账号")
+              print("::error title=账号配置错误::accounts2 中没有可用账号")
               raise SystemExit(1)
 
           invalid = []
@@ -61,7 +61,7 @@ jobs:
 
           if invalid:
               for message in invalid:
-                  print(f"::error title=ACCOUNTS 格式错误::{message}")
+                  print(f"::error title=accounts2 格式错误::{message}")
               raise SystemExit(1)
 
           indexes = list(range(1, len(lines) + 1))
@@ -88,7 +88,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
-      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      accounts2: ${{ secrets.accounts2 }}
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       ACTIVITY_URL: ${{ secrets.ACTIVITY_URL }}
       LOTTERY_ACTIVITY_URL: ${{ secrets.LOTTERY_ACTIVITY_URL }}
@@ -131,7 +131,7 @@ jobs:
           python - <<'PY'
           import os
 
-          lines = [line.strip() for line in os.environ["ACCOUNTS"].splitlines() if line.strip()]
+          lines = [line.strip() for line in os.environ["accounts2"].splitlines() if line.strip()]
           index = int(os.environ["ACCOUNT_INDEX"])
           if index < 1 or index > len(lines):
               print(f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内")
@@ -181,7 +181,7 @@ jobs:
               "batch_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_number": int(os.getenv("GROUP_NUMBER", "1") or 1),
-              "total_accounts": 1,
+              "total_accounts2": 1,
               "results": [{
                   "account_index": account_index,
                   "execution_order": int(os.getenv("EXECUTION_ORDER", "0") or 0),
@@ -276,7 +276,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare-retry.outputs.matrix) }}
     env:
-      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      accounts2: ${{ secrets.accounts2 }}
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       ACTIVITY_URL: ${{ secrets.ACTIVITY_URL }}
       LOTTERY_ACTIVITY_URL: ${{ secrets.LOTTERY_ACTIVITY_URL }}
@@ -319,7 +319,7 @@ jobs:
           python - <<'PY'
           import os
 
-          lines = [line.strip() for line in os.environ["ACCOUNTS"].splitlines() if line.strip()]
+          lines = [line.strip() for line in os.environ["accounts2"].splitlines() if line.strip()]
           index = int(os.environ["ACCOUNT_INDEX"])
           if index < 1 or index > len(lines):
               print(f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内")
@@ -369,7 +369,7 @@ jobs:
               "batch_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_number": int(os.getenv("GROUP_NUMBER", "1") or 1),
-              "total_accounts": 1,
+              "total_accounts2": 1,
               "results": [{
                   "account_index": account_index,
                   "execution_order": int(os.getenv("EXECUTION_ORDER", "0") or 0),
@@ -441,7 +441,7 @@ jobs:
 
       - name: 生成抽奖汇总表
         env:
-          ACCOUNTS_BATCH1: ${{ secrets.ACCOUNTS }}
+          accounts2_BATCH1: ${{ secrets.accounts2 }}
           GENERATE_XLSX: "true"
           OUTPUT_XLSX_PATH: merged/h4-browser-lottery-summary.xlsx
           NOTIFY_CHANNELS: telegram

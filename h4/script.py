@@ -449,10 +449,20 @@ class Config:
     slow_mo: int = 0
     generate_report: bool = False
     cleanup_local_files: bool = False
+    default_timeout_ms: int = 30_000
+    navigation_timeout_ms: int = 90_000
+    networkidle_timeout_ms: int = 45_000
+    selector_timeout_ms: int = 30_000
+    result_popup_timeout_seconds: float = 25.0
 
 
 def load_config() -> Config:
     in_github_actions = truthy(os.getenv("GITHUB_ACTIONS"), default=False)
+    default_timeout = 60_000 if in_github_actions else 30_000
+    navigation_timeout = 120_000 if in_github_actions else 90_000
+    networkidle_timeout = 60_000 if in_github_actions else 45_000
+    selector_timeout = 45_000 if in_github_actions else 30_000
+    result_popup_timeout = 35 if in_github_actions else 25
     cleanup_requested = truthy(
         os.getenv("H4_CLEANUP_LOCAL_FILES"),
         default=not in_github_actions,
@@ -477,6 +487,11 @@ def load_config() -> Config:
         slow_mo=env_int("H4_SLOW_MO", 0),
         generate_report=truthy(os.getenv("GENERATE_XLSX"), default=False),
         cleanup_local_files=cleanup_local_files,
+        default_timeout_ms=env_int("H4_DEFAULT_TIMEOUT_MS", default_timeout),
+        navigation_timeout_ms=env_int("H4_NAVIGATION_TIMEOUT_MS", navigation_timeout),
+        networkidle_timeout_ms=env_int("H4_NETWORKIDLE_TIMEOUT_MS", networkidle_timeout),
+        selector_timeout_ms=env_int("H4_SELECTOR_TIMEOUT_MS", selector_timeout),
+        result_popup_timeout_seconds=safe_money(env_first("H4_RESULT_POPUP_TIMEOUT_SECONDS"), result_popup_timeout),
     )
 
 
@@ -554,7 +569,8 @@ def new_browser(p: Any, config: Config) -> tuple[Browser, BrowserContext, Page]:
     )
     add_miniprogram_fingerprint(context)
     page = context.new_page()
-    page.set_default_timeout(15_000)
+    page.set_default_timeout(config.default_timeout_ms)
+    page.set_default_navigation_timeout(config.navigation_timeout_ms)
     return browser, context, page
 
 
@@ -568,7 +584,7 @@ def solve_slider_with_bezier(page: Page, config: Config, account_label: str = ""
     slider_selector = f"#{slider_id}"
     wrapper_selector = f"#{wrapper_id}"
     try:
-        page.wait_for_selector(slider_selector, state="visible", timeout=3_000)
+        page.wait_for_selector(slider_selector, state="visible", timeout=min(10_000, config.selector_timeout_ms))
     except TimeoutError:
         log(f"{account_label}未检测到滑块")
         return True
@@ -635,7 +651,7 @@ def solve_slider_with_bezier(page: Page, config: Config, account_label: str = ""
             if not ok:
                 continue
             time.sleep(2.0)
-            if page.locator(slider_selector).count() == 0 or not page.locator(slider_selector).first.is_visible(timeout=1_000):
+            if page.locator(slider_selector).count() == 0 or not page.locator(slider_selector).first.is_visible(timeout=2_000):
                 log(f"{account_label}滑块通过")
                 return True
         except Exception as exc:
@@ -658,8 +674,8 @@ def click_if_visible(page: Page, selector: str, timeout: int = 1_500) -> bool:
 def login(page: Page, config: Config, username: str, password: str, account_index: int) -> None:
     label = f"账号{account_index} - "
     log(f"{label}打开移动登录页")
-    page.goto(config.passport_url, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_load_state("networkidle", timeout=30_000)
+    page.goto(config.passport_url, wait_until="domcontentloaded", timeout=config.navigation_timeout_ms)
+    page.wait_for_load_state("networkidle", timeout=config.networkidle_timeout_ms)
 
     user_selectors = [
         'input[placeholder*="手机"]',
@@ -671,7 +687,7 @@ def login(page: Page, config: Config, username: str, password: str, account_inde
     for selector in user_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() and locator.is_visible(timeout=1_500):
+            if locator.count() and locator.is_visible(timeout=min(8_000, config.selector_timeout_ms)):
                 locator.fill(username)
                 user_filled = True
                 break
@@ -703,7 +719,7 @@ def login(page: Page, config: Config, username: str, password: str, account_inde
     for selector in pwd_selectors:
         try:
             locator = page.locator(selector).first
-            if locator.count() and locator.is_visible(timeout=3_000):
+            if locator.count() and locator.is_visible(timeout=min(12_000, config.selector_timeout_ms)):
                 locator.fill(password)
                 pwd_filled = True
                 break
@@ -719,7 +735,7 @@ def login(page: Page, config: Config, username: str, password: str, account_inde
     solve_slider_with_bezier(page, config, label)
 
     try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
+        page.wait_for_load_state("networkidle", timeout=config.networkidle_timeout_ms)
     except TimeoutError:
         pass
     log(f"{label}登录步骤完成")
@@ -727,9 +743,9 @@ def login(page: Page, config: Config, username: str, password: str, account_inde
 
 def goto_activity(page: Page, config: Config) -> None:
     log("打开抽奖活动页")
-    page.goto(config.activity_url, wait_until="domcontentloaded", referer=config.referer, timeout=60_000)
+    page.goto(config.activity_url, wait_until="domcontentloaded", referer=config.referer, timeout=config.navigation_timeout_ms)
     try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
+        page.wait_for_load_state("networkidle", timeout=config.networkidle_timeout_ms)
     except TimeoutError:
         pass
     random_sleep(1.8, 3.2, "活动页加载后模拟停留")
@@ -848,10 +864,10 @@ def click_exchange_confirm_button(page: Page) -> bool:
         "[role='button']:has-text('确认')",
     ]
     try:
-        page.wait_for_selector(".base-modal__confirm, .uni-modal__btn_primary", state="visible", timeout=4_000)
+        page.wait_for_selector(".base-modal__confirm, .uni-modal__btn_primary", state="visible", timeout=8_000)
     except TimeoutError:
         try:
-            page.wait_for_selector("text=/确认|确定/", state="visible", timeout=1_500)
+            page.wait_for_selector("text=/确认|确定/", state="visible", timeout=4_000)
         except TimeoutError:
             log("兑换后未出现确认弹窗，可能页面已直接兑换或弹窗结构变化")
             return False
@@ -859,7 +875,7 @@ def click_exchange_confirm_button(page: Page) -> bool:
     for selector in selectors:
         try:
             locator = page.locator(selector)
-            if click_exact_locator(locator, "兑换确认按钮", timeout=3_000):
+            if click_exact_locator(locator, "兑换确认按钮", timeout=6_000):
                 return True
         except Exception:
             continue
@@ -886,7 +902,7 @@ def click_continue_draw_button(page: Page) -> bool:
     ]
     for selector in selectors:
         try:
-            if click_exact_locator(page.locator(selector), "继续抽奖按钮", timeout=2_500):
+            if click_exact_locator(page.locator(selector), "继续抽奖按钮", timeout=6_000):
                 return True
         except Exception:
             continue
@@ -911,7 +927,7 @@ def signup_activities(page: Page, config: Config) -> int:
             clicked += 1
             random_sleep(3.0, 5.0, "报名后随机停顿")
             try:
-                page.wait_for_load_state("networkidle", timeout=8_000)
+                page.wait_for_load_state("networkidle", timeout=min(20_000, config.networkidle_timeout_ms))
             except TimeoutError:
                 pass
             continue
@@ -957,7 +973,7 @@ def exchange_chances(page: Page, config: Config, monitor: LotteryMonitor) -> int
             break
         clicked += 1
         try:
-            page.wait_for_load_state("networkidle", timeout=10_000)
+            page.wait_for_load_state("networkidle", timeout=min(25_000, config.networkidle_timeout_ms))
         except TimeoutError:
             pass
         time.sleep(random.uniform(1.2, 2.0))
@@ -1067,9 +1083,9 @@ def draw_lottery(page: Page, config: Config, monitor: LotteryMonitor) -> int:
             break
 
         draw_count += 1
-        title = read_prize_from_result_popup(page)
+        title = read_prize_from_result_popup(page, timeout_seconds=config.result_popup_timeout_seconds)
         if not title:
-            log("15s 内未从页面弹窗读取到 .prize__name，停止后续抽奖以避免漏记")
+            log(f"{config.result_popup_timeout_seconds:.0f}s 内未从页面弹窗读取到 .prize__name，停止后续抽奖以避免漏记")
             break
 
         monitor.records.append(LotteryRecord(prize_title=title, source_url="page_dom"))
@@ -1348,7 +1364,7 @@ def cleanup_local_outputs(config: Config, paths: list[Path]) -> None:
 
 def run() -> int:
     load_dotenv(ROOT / ".env")
-    load_dotenv(ROOT / "h4" / ".env")
+    load_dotenv(ROOT / "h4" / ".env", override=not truthy(os.getenv("GITHUB_ACTIONS"), default=False))
 
     username, password, account_index = load_account_from_args()
     config = load_config()
