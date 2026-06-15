@@ -711,6 +711,7 @@ class ApiClient:
         self.activity_records = make_empty_extra_records()
         self.lottery_activity_code = DEFAULT_LOTTERY_ACTIVITY_CODE
         self.draw_results = []
+        self.last_lucky_key_count = 0
 
     def close(self):
         if self.http:
@@ -1137,7 +1138,7 @@ class ApiClient:
     def signup_activity_batch(self, sub_activity_types: list[int]) -> bool:
         payload = {"activityType": 2, "subActivityTypes": sub_activity_types}
         label = ",".join(str(item) for item in sub_activity_types)
-        data = self.post_json_retry1(
+        data = self._post_json_once(
             f"{self.base_url}{ACTIVITY_SIGNUP_PATH}",
             payload=payload,
             tag=f"报名活动[{label}]",
@@ -1151,7 +1152,23 @@ class ApiClient:
         if "已报名" in message or "重复" in message:
             log(f"账号{self.account_index} - ℹ️ 活动[{label}]已报名，继续后续流程")
             return True
-        self._mark_failure(f"报名活动[{label}]失败", raw=data)
+        time.sleep(random.uniform(0.6, 1.2))
+        log(f"账号{self.account_index} - 🔁 报名活动[{label}]POST失败，重试一次POST...")
+        retry_data = self._post_json_once(
+            f"{self.base_url}{ACTIVITY_SIGNUP_PATH}",
+            payload=payload,
+            tag=f"报名活动[{label}]",
+            dump_body_on_error=True,
+            dump_json_on_success_false=True,
+        )
+        if isinstance(retry_data, dict) and retry_data.get("success") is True:
+            log(f"账号{self.account_index} - ✅ 报名活动[{label}]完成")
+            return True
+        retry_message = build_detail_reason(retry_data, default=f"报名活动[{label}]失败")
+        if "已报名" in retry_message or "重复" in retry_message:
+            log(f"账号{self.account_index} - ℹ️ 活动[{label}]已报名，继续后续流程")
+            return True
+        self._mark_failure(f"报名活动[{label}]失败", raw=retry_data if retry_data is not None else data)
         return False
 
     def fetch_signup_info(self, sub_activity_types: list[int]) -> list[dict]:
@@ -1235,6 +1252,7 @@ class ApiClient:
         )
         payload = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else {}
         count = safe_int(payload.get("count"), 0)
+        self.last_lucky_key_count = count
         log(f"账号{self.account_index} - 当前可用抽奖次数: {count}")
         return count
 
@@ -1281,6 +1299,9 @@ class ApiClient:
 
         exchanged = self.exchange_lottery_chances()
         draw_records = self.draw_lottery_chances()
+        remaining_after_draw = self.last_lucky_key_count
+        if not draw_records and remaining_after_draw == 0:
+            draw_records = self.fetch_lottery_wins()
         self.draw_results = draw_records[:3]
 
         time.sleep(random.uniform(1, 2))
@@ -1291,7 +1312,10 @@ class ApiClient:
         self.has_reward = bool(draw_records)
 
         if draw_records:
-            self.sign_status = f"抽奖完成，获得{len(draw_records)}个奖品"
+            if remaining_after_draw == 0 and exchanged == 0:
+                self.sign_status = f"已无抽奖次数，读取中奖记录{len(draw_records)}条"
+            else:
+                self.sign_status = f"抽奖完成，获得{len(draw_records)}个奖品"
             self.detail_reason = ""
             return True
 
