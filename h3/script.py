@@ -885,6 +885,51 @@ class ApiClient:
             log(f"账号{self.account_index} - {tag}异常: {e}")
             return None
 
+    def _post_raw_json_once(self, url, payload, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
+        try:
+            headers = dict(headers_override or self.headers)
+            for key in list(headers.keys()):
+                if str(key).lower() in {"content-type", "content-length"}:
+                    headers.pop(key, None)
+            headers["Content-Type"] = "application/json;charset=UTF-8"
+            body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if self.http:
+                resp = self.http.post(url, headers=headers, content=body)
+            else:
+                resp = requests.post(url, headers=headers, data=body, timeout=12)
+
+            if resp.status_code != 200:
+                allow = resp.headers.get("Allow") or resp.headers.get("allow") or ""
+                msg = f"账号{self.account_index} - {tag}请求失败 {resp.status_code} (POST {url})"
+                if allow:
+                    msg += f" Allow={allow}"
+                log(msg)
+                if dump_body_on_error:
+                    body_text = redact_sensitive(truncate_text(resp.text, 2000))
+                    log(f"账号{self.account_index} - {tag}响应内容: {body_text}")
+                return None
+
+            try:
+                data = resp.json()
+            except Exception:
+                log(f"账号{self.account_index} - {tag}响应JSON解析失败 (200 POST {url})")
+                if dump_body_on_error:
+                    body_text = redact_sensitive(truncate_text(resp.text, 2000))
+                    log(f"账号{self.account_index} - {tag}响应内容: {body_text}")
+                return None
+
+            if dump_json_on_success_false and isinstance(data, dict) and data.get("success") is False:
+                log(f"账号{self.account_index} - ⚠️ {tag}返回success=false: {redact_sensitive(truncate_text(json.dumps(data, ensure_ascii=False), 2000))}")
+
+            if is_risk_control_response(data):
+                self.risk_controlled = True
+                self.detail_reason = build_detail_reason(data, "抽奖失败，疑似触发活动限制")
+            return data
+
+        except Exception as e:
+            log(f"账号{self.account_index} - {tag}异常: {e}")
+            return None
+
     def get_json_retry1(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
         data = self._get_json_once(
             url,
@@ -931,6 +976,30 @@ class ApiClient:
         )
         return data2 if data2 is not None else data
 
+    def post_raw_json_retry1(self, url, payload=None, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
+        data = self._post_raw_json_once(
+            url,
+            payload=payload,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
+        if isinstance(data, dict) and data.get("success") is True:
+            return data
+
+        time.sleep(random.uniform(0.6, 1.2))
+        log(f"账号{self.account_index} - 🔁 {tag}POST失败，重试一次POST...")
+        data2 = self._post_raw_json_once(
+            url,
+            payload=payload,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
+        return data2 if data2 is not None else data
+
     @with_retry
     def get_points(self):
         data = self.get_json_retry1(
@@ -949,7 +1018,7 @@ class ApiClient:
         url = f"{self.base_url}{INVOICE_INFO_PATH}"
         headers = self._invoice_headers()
         payload = {"invoiceType": 1, "vatCompanyName": ""}
-        data = self.post_json_retry1(
+        data = self.post_raw_json_retry1(
             url,
             payload=payload,
             tag="消费金额",
@@ -958,15 +1027,6 @@ class ApiClient:
             headers_override=headers,
         )
         money = find_invoice_money_value(data)
-        if money is None:
-            data = self.get_json_retry1(
-                url,
-                tag="消费金额GET",
-                dump_body_on_error=True,
-                dump_json_on_success_false=True,
-                headers_override=headers,
-            )
-            money = find_invoice_money_value(data)
         if money is None:
             log(f"账号{self.account_index} - 消费金额接口未找到 invoiceMoney，按 0 写入")
             self.invoice_money = 0.0

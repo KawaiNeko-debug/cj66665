@@ -1196,7 +1196,7 @@ def fetch_invoice_money(page: Page) -> float:
                   "x-jlc-mp-env": cfg.mpEnv || "release",
                   "x-jlc-mp-appid": cfg.mpAppid || "wx6c7b851c877dba42",
                 };
-                if (withJson) headers["content-type"] = "application/json";
+                if (withJson) headers["content-type"] = "application/json;charset=UTF-8";
                 headers[cfg.clientTypeHeader || "x-jlc-clienttype"] = cfg.clientType || "MP-WEIXIN";
                 headers["x-jlc-clienttype"] = cfg.clientType || "MP-WEIXIN";
                 if (cfg.secretKey) {
@@ -1224,8 +1224,7 @@ def fetch_invoice_money(page: Page) -> float:
                 return { ok: response.ok, status: response.status, method, data };
               };
               const postResult = await request("POST");
-              if (hasInvoiceMoney(postResult.data) || isEmptyData(postResult.data)) return postResult;
-              return await request("GET");
+              return postResult;
             }
             """,
             payload,
