@@ -105,6 +105,7 @@ VOUCHER_LOTTERY_DETAIL_PATH = "/api/activity/brand/activity/ns/getVoucherLottery
 EXCHANGE_LOTTERY_CHANCE_PATH = "/api/activity/brand/activity/exchangeLotteryChance"
 LOTTERY_KEY_COUNT_PATH = "/api/cgi/operationService/front/lottery/getLuckyKeyCount"
 LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
+INVOICE_INFO_PATH = "/api/integrated/vatInvoiceInfo/selectInvoiceInfoDetails"
 DEFAULT_LOTTERY_ACTIVITY_CODE = "LAKU"
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
@@ -161,6 +162,24 @@ def safe_float(v, default=0.0) -> float:
         return float(str(v).strip())
     except Exception:
         return default
+
+def find_invoice_money_value(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key) == "invoiceMoney":
+                return safe_float(item, 0.0)
+        for item in value.values():
+            found = find_invoice_money_value(item)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        if not value:
+            return 0.0
+        for item in value:
+            found = find_invoice_money_value(item)
+            if found is not None:
+                return found
+    return None
 
 def truncate_text(s: str, limit: int = 1200) -> str:
     if s is None:
@@ -651,6 +670,8 @@ class ApiClient:
         self.initial_points = 0
         self.final_points = 0
         self.points_reward = 0
+        self.invoice_money = 0.0
+        self.invoice_money_loaded = False
 
         self.sign_status = "未知"
         self.has_reward = False
@@ -809,6 +830,34 @@ class ApiClient:
 
         self._refresh_token()
         return None
+
+    def fetch_invoice_money(self) -> float:
+        url = f"{self.base_url}{INVOICE_INFO_PATH}"
+        data = self.post_json_retry1(
+            url,
+            payload={},
+            tag="消费金额",
+            dump_body_on_error=True,
+            dump_json_on_success_false=True,
+        )
+        money = find_invoice_money_value(data)
+        if money is None:
+            data = self.get_json_retry1(
+                url,
+                tag="消费金额GET",
+                dump_body_on_error=True,
+                dump_json_on_success_false=True,
+            )
+            money = find_invoice_money_value(data)
+        if money is None:
+            log(f"账号{self.account_index} - 消费金额接口未找到 invoiceMoney，按 0 写入")
+            self.invoice_money = 0.0
+            self.invoice_money_loaded = True
+            return self.invoice_money
+        self.invoice_money = money
+        self.invoice_money_loaded = True
+        log(f"账号{self.account_index} - 消费金额: {self.invoice_money}")
+        return self.invoice_money
 
     def fetch_voucher_change_records(self) -> list[dict]:
         data = self.get_json_retry1(
@@ -1059,6 +1108,7 @@ class ApiClient:
         time.sleep(random.uniform(1, 2))
         self.final_points = self.get_points() or self.initial_points
         self.points_reward = self.final_points - self.initial_points
+        self.fetch_invoice_money()
         self.sign_completed_at = current_time_text()
         self.has_reward = bool(draw_records)
 
@@ -1097,6 +1147,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
         'initial_points': 0,
         'final_points': 0,
         'points_reward': 0,
+        'invoice_money': 0.0,
+        'consumption_amount': 0.0,
         'has_reward': False,
         'token_extracted': False,
         'secretkey_extracted': False,
@@ -1270,6 +1322,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                     if latest_points is not None:
                         client.final_points = latest_points
                         client.points_reward = client.final_points - client.initial_points
+                if not client.invoice_money_loaded:
+                    client.fetch_invoice_money()
 
                 client.fetch_activity_records()
                 result.update({
@@ -1278,6 +1332,8 @@ def sign_in_account(username, password, account_index, total_accounts, retry_cou
                     'initial_points': client.initial_points,
                     'final_points': client.final_points,
                     'points_reward': client.points_reward,
+                    'invoice_money': client.invoice_money,
+                    'consumption_amount': client.invoice_money,
                     'has_reward': client.has_reward,
                     'risk_controlled': client.risk_controlled,
                     'detail_reason': client.detail_reason,
@@ -1325,6 +1381,8 @@ def process_single_account(username, password, account_index, total_accounts):
         'initial_points': 0,
         'final_points': 0,
         'points_reward': 0,
+        'invoice_money': 0.0,
+        'consumption_amount': 0.0,
         'has_reward': False,
         'token_extracted': False,
         'secretkey_extracted': False,
@@ -1356,10 +1414,10 @@ def process_single_account(username, password, account_index, total_accounts):
             break
 
         if res['sign_success'] and not merged['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'invoice_money', 'consumption_amount', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 merged[k] = res[k]
         elif not merged['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward', 'invoice_money', 'consumption_amount']:
                 merged[k] = res.get(k)
 
         merged['retry_count'] = res['retry_count']
@@ -1412,10 +1470,10 @@ def final_retry(all_results, usernames, passwords, total_accounts):
             continue
 
         if final['sign_success'] and not orig['sign_success']:
-            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
+            for k in ['sign_success', 'sign_status', 'initial_points', 'final_points', 'points_reward', 'invoice_money', 'consumption_amount', 'has_reward', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records']:
                 orig[k] = final[k]
         elif not orig['sign_success']:
-            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward']:
+            for k in ['sign_status', 'risk_controlled', 'detail_reason', 'sign_time', 'sign_ip', 'next_day_success', 'task_start_date', 'sign_completed_at', 'activity_records', 'initial_points', 'final_points', 'points_reward', 'invoice_money', 'consumption_amount']:
                 orig[k] = final.get(k)
 
         orig.update({
@@ -1537,6 +1595,8 @@ def write_results_json(path, all_results, total_accounts):
                 "initial_points": r.get("initial_points"),
                 "final_points": r.get("final_points"),
                 "points_reward": r.get("points_reward"),
+                "invoice_money": r.get("invoice_money", r.get("consumption_amount", 0.0)),
+                "consumption_amount": r.get("consumption_amount", r.get("invoice_money", 0.0)),
                 "has_reward": r.get("has_reward"),
                 "password_error": r.get("password_error"),
                 "risk_controlled": r.get("risk_controlled"),

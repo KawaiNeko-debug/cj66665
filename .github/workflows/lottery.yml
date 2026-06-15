@@ -6,7 +6,7 @@ on:
       headless:
         description: "是否无头运行浏览器"
         required: true
-        default: "true"
+        default: "false"
         type: choice
         options:
           - "true"
@@ -26,7 +26,7 @@ jobs:
       matrix: ${{ steps.prepare.outputs.matrix }}
       count: ${{ steps.prepare.outputs.count }}
     env:
-      ACCOUNTS2: ${{ secrets.ACCOUNTS2 }}
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
     steps:
       - id: prepare
         name: 检查账号并生成随机矩阵
@@ -37,14 +37,14 @@ jobs:
           import os
           import random
 
-          ACCOUNTS2 = os.getenv("ACCOUNTS2", "").strip()
-          if not ACCOUNTS2:
-              print("::error title=缺少 GitHub Secret::ACCOUNTS2 为空或未创建")
+          accounts = os.getenv("ACCOUNTS", "").strip()
+          if not accounts:
+              print("::error title=缺少 GitHub Secret::ACCOUNTS 为空或未创建")
               raise SystemExit(1)
 
-          lines = [line.strip() for line in ACCOUNTS2.splitlines() if line.strip()]
+          lines = [line.strip() for line in accounts.splitlines() if line.strip()]
           if not lines:
-              print("::error title=账号配置错误::ACCOUNTS2 中没有可用账号")
+              print("::error title=账号配置错误::ACCOUNTS 中没有可用账号")
               raise SystemExit(1)
 
           invalid = []
@@ -61,7 +61,7 @@ jobs:
 
           if invalid:
               for message in invalid:
-                  print(f"::error title=ACCOUNTS2 格式错误::{message}")
+                  print(f"::error title=ACCOUNTS 格式错误::{message}")
               raise SystemExit(1)
 
           indexes = list(range(1, len(lines) + 1))
@@ -85,10 +85,10 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
-      ACCOUNTS2: ${{ secrets.ACCOUNTS2 }}
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       ACTIVITY_URL: ${{ secrets.ACTIVITY_URL }}
       LOTTERY_ACTIVITY_URL: ${{ secrets.LOTTERY_ACTIVITY_URL }}
@@ -103,6 +103,11 @@ jobs:
       H4_EXCHANGE_TARGET: "3"
       H4_DRAW_TARGET: "3"
       H4_CLEANUP_LOCAL_FILES: "false"
+      H4_DEFAULT_TIMEOUT_MS: "60000"
+      H4_NAVIGATION_TIMEOUT_MS: "120000"
+      H4_NETWORKIDLE_TIMEOUT_MS: "60000"
+      H4_SELECTOR_TIMEOUT_MS: "45000"
+      H4_RESULT_POPUP_TIMEOUT_SECONDS: "35"
       GROUP_NAME: h4-browser-lottery
       GROUP_NUMBER: "1"
       ACCOUNT_INDEX: ${{ matrix.account_index }}
@@ -131,7 +136,7 @@ jobs:
           python - <<'PY'
           import os
 
-          lines = [line.strip() for line in os.environ["ACCOUNTS2"].splitlines() if line.strip()]
+          lines = [line.strip() for line in os.environ["ACCOUNTS"].splitlines() if line.strip()]
           index = int(os.environ["ACCOUNT_INDEX"])
           if index < 1 or index > len(lines):
               print(f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内")
@@ -181,7 +186,7 @@ jobs:
               "batch_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_number": int(os.getenv("GROUP_NUMBER", "1") or 1),
-              "total_ACCOUNTS2": 1,
+              "total_accounts": 1,
               "results": [{
                   "account_index": account_index,
                   "execution_order": int(os.getenv("EXECUTION_ORDER", "0") or 0),
@@ -193,6 +198,8 @@ jobs:
                   "initial_points": 0,
                   "final_points": 0,
                   "points_reward": 0,
+                  "invoice_money": 0,
+                  "consumption_amount": 0,
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
@@ -276,7 +283,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare-retry.outputs.matrix) }}
     env:
-      ACCOUNTS2: ${{ secrets.ACCOUNTS2 }}
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
       PASSPORT_URL: ${{ secrets.PASSPORT_URL }}
       ACTIVITY_URL: ${{ secrets.ACTIVITY_URL }}
       LOTTERY_ACTIVITY_URL: ${{ secrets.LOTTERY_ACTIVITY_URL }}
@@ -291,6 +298,11 @@ jobs:
       H4_EXCHANGE_TARGET: "3"
       H4_DRAW_TARGET: "3"
       H4_CLEANUP_LOCAL_FILES: "false"
+      H4_DEFAULT_TIMEOUT_MS: "60000"
+      H4_NAVIGATION_TIMEOUT_MS: "120000"
+      H4_NETWORKIDLE_TIMEOUT_MS: "60000"
+      H4_SELECTOR_TIMEOUT_MS: "45000"
+      H4_RESULT_POPUP_TIMEOUT_SECONDS: "35"
       GROUP_NAME: h4-browser-lottery
       GROUP_NUMBER: "1"
       ACCOUNT_INDEX: ${{ matrix.account_index }}
@@ -319,7 +331,7 @@ jobs:
           python - <<'PY'
           import os
 
-          lines = [line.strip() for line in os.environ["ACCOUNTS2"].splitlines() if line.strip()]
+          lines = [line.strip() for line in os.environ["ACCOUNTS"].splitlines() if line.strip()]
           index = int(os.environ["ACCOUNT_INDEX"])
           if index < 1 or index > len(lines):
               print(f"::error title=账号索引错误::账号 {index} 不在 1..{len(lines)} 范围内")
@@ -369,7 +381,7 @@ jobs:
               "batch_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_name": os.getenv("GROUP_NAME", "h4-browser-lottery"),
               "group_number": int(os.getenv("GROUP_NUMBER", "1") or 1),
-              "total_ACCOUNTS2": 1,
+              "total_accounts": 1,
               "results": [{
                   "account_index": account_index,
                   "execution_order": int(os.getenv("EXECUTION_ORDER", "0") or 0),
@@ -381,6 +393,8 @@ jobs:
                   "initial_points": 0,
                   "final_points": 0,
                   "points_reward": 0,
+                  "invoice_money": 0,
+                  "consumption_amount": 0,
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
@@ -441,12 +455,14 @@ jobs:
 
       - name: 生成抽奖汇总表
         env:
-          ACCOUNTS2_BATCH1: ${{ secrets.ACCOUNTS2 }}
+          ACCOUNTS_BATCH1: ${{ secrets.ACCOUNTS }}
           GENERATE_XLSX: "true"
           OUTPUT_XLSX_PATH: merged/h4-browser-lottery-summary.xlsx
           NOTIFY_CHANNELS: telegram
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TG_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.TG_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TG_CHAT_ID || secrets.TELEGRAM_TO || secrets.TG_TO }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_TO || secrets.TG_TO }}
           TELEGRAM_SEND_TEXT: "true"
           TELEGRAM_SEND_XLSX: "true"
         run: python h3/report.py merged

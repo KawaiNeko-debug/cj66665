@@ -116,6 +116,8 @@ def main():
                 "initial_points": row.get("initial_points", 0.0),
                 "final_points": row.get("final_points", 0.0),
                 "points_reward": row.get("points_reward", 0.0),
+                "invoice_money": row.get("invoice_money", row.get("consumption_amount", 0.0)),
+                "consumption_amount": row.get("consumption_amount", row.get("invoice_money", 0.0)),
                 "has_reward": truthy(row.get("has_reward")),
                 "password_error": truthy(row.get("password_error")),
                 "risk_controlled": truthy(row.get("risk_controlled")),

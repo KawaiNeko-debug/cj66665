@@ -119,6 +119,8 @@ def normalize_records(data, source_path: str) -> list[dict]:
             "initial_points": safe_float(r.get("initial_points"), default=0.0),
             "final_points": safe_float(r.get("final_points"), default=0.0),
             "points_reward": safe_float(r.get("points_reward"), default=0.0),
+            "invoice_money": safe_float(r.get("invoice_money", r.get("consumption_amount")), default=0.0),
+            "consumption_amount": safe_float(r.get("consumption_amount", r.get("invoice_money")), default=0.0),
             "has_reward": truthy(r.get("has_reward")),
             "password_error": truthy(r.get("password_error")),
             "retry_count": safe_int(r.get("retry_count"), default=0),
@@ -350,9 +352,26 @@ def split_text(text: str, limit: int = 3900) -> list[str]:
     return parts
 
 
+def telegram_credentials() -> tuple[str, str]:
+    token = (
+        os.getenv("TELEGRAM_BOT_TOKEN")
+        or os.getenv("TG_BOT_TOKEN")
+        or os.getenv("TELEGRAM_TOKEN")
+        or os.getenv("TG_TOKEN")
+        or ""
+    ).strip()
+    chat_id = (
+        os.getenv("TELEGRAM_CHAT_ID")
+        or os.getenv("TG_CHAT_ID")
+        or os.getenv("TELEGRAM_TO")
+        or os.getenv("TG_TO")
+        or ""
+    ).strip()
+    return token, chat_id
+
+
 def send_telegram(text: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    token, chat_id = telegram_credentials()
     if not token or not chat_id:
         return False
 
@@ -407,7 +426,8 @@ def parse_channels() -> list[str]:
         return [c.strip().lower() for c in raw.split(",") if c.strip()]
     # 自动推断
     channels = []
-    if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+    token, chat_id = telegram_credentials()
+    if token and chat_id:
         channels.append("telegram")
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         channels.append("email")

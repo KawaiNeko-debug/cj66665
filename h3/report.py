@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import re
 import smtplib
 import ssl
 import sys
@@ -16,6 +17,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
+if str(os.getenv("GITHUB_ACTIONS") or "").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+    load_dotenv(os.path.join(ROOT_DIR, "h4", ".env"), override=True)
 
 for stream_name in ("stdout", "stderr"):
     stream = getattr(sys, stream_name, None)
@@ -39,6 +42,7 @@ STATUS_BLUE_FILL = PatternFill("solid", fgColor="9DC3E6")
 FONT_GREEN = Font(color="008000")
 FONT_RED = Font(color="C00000")
 FONT_DARK = Font(color="000000")
+BAD_LOTTERY_TITLE_RE = re.compile(r"(抽奖机会|我的抽奖机会|立即抽奖|开始抽奖|去抽奖|再抽一次|报名|兑换|活动规则|订单统计)")
 
 
 def truthy(value) -> bool:
@@ -101,6 +105,14 @@ def load_manifest(results_dir: str) -> dict:
         return {}
 
 
+def clean_lottery_title(title: str) -> str:
+    text = re.sub(r"\s+", " ", str(title or "")).strip()
+    compacted = re.sub(r"\s+", "", text)
+    if not text or BAD_LOTTERY_TITLE_RE.search(compacted):
+        return ""
+    return text
+
+
 def target_date_text(manifest: dict) -> str:
     if isinstance(manifest, dict) and manifest.get("target_date"):
         return str(manifest["target_date"]).strip()
@@ -141,12 +153,25 @@ def normalize_activity_records(value) -> dict:
     rows = value.get("lottery")
     if not isinstance(rows, list):
         rows = []
-    for item in rows[:3]:
+    for item in rows:
+        if len(normalized["lottery"]) >= 3:
+            break
         if not isinstance(item, dict):
+            continue
+        title = clean_lottery_title(
+            item.get("title")
+            or item.get("prize_title")
+            or item.get("prize_name")
+            or item.get("skuTitle")
+            or item.get("prizeTitle")
+            or item.get("goodsName")
+            or item.get("awardName")
+        )
+        if not title:
             continue
         normalized["lottery"].append(
             {
-                "title": str(item.get("title") or item.get("skuTitle") or item.get("prizeTitle") or "").strip(),
+                "title": title,
                 "status_text": str(item.get("status_text") or "").strip(),
                 "claimed": truthy(item.get("claimed")),
                 "expiry_date": str(item.get("expiry_date") or "").strip(),
@@ -181,6 +206,7 @@ def normalize_record(record: dict, payload: dict, account_lookup: dict[tuple[int
         "initial_points": safe_float(record.get("initial_points"), 0.0),
         "final_points": safe_float(record.get("final_points"), 0.0),
         "points_reward": safe_float(record.get("points_reward"), 0.0),
+        "invoice_money": safe_float(record.get("invoice_money", record.get("consumption_amount")), 0.0),
         "has_reward": truthy(record.get("has_reward")),
         "password_error": truthy(record.get("password_error")),
         "risk_controlled": risk_controlled,
@@ -230,6 +256,7 @@ def build_missing_record(group_number: int, account_index: int, username: str) -
         "initial_points": 0.0,
         "final_points": 0.0,
         "points_reward": 0.0,
+        "invoice_money": 0.0,
         "has_reward": False,
         "password_error": False,
         "risk_controlled": False,
@@ -440,6 +467,19 @@ def fill_for_status(label: str):
     return None
 
 
+def is_bean_prize(title: str) -> bool:
+    return "金豆" in str(title or "")
+
+
+def is_normal_six_bean_prize(title: str) -> bool:
+    compacted = re.sub(r"\s+", "", str(title or ""))
+    return bool(re.fullmatch(r"6(?:个)?金豆", compacted))
+
+
+def bean_expiry_date() -> str:
+    return f"{datetime.now().year + 1}-12-31"
+
+
 def lottery_columns(record: dict) -> list[str]:
     activity = normalize_activity_records(record.get("activity_records"))
     values = []
@@ -447,9 +487,13 @@ def lottery_columns(record: dict) -> list[str]:
     for index in range(3):
         item = rows[index] if index < len(rows) else {}
         if item:
+            title = str(item.get("title") or "").strip()
+            expiry_date = str(item.get("expiry_date") or "").strip()
+            if is_bean_prize(title):
+                expiry_date = bean_expiry_date()
             values.extend([
-                str(item.get("title") or "").strip(),
-                str(item.get("expiry_date") or "").strip(),
+                title,
+                expiry_date,
             ])
         else:
             values.extend(["", ""])
@@ -466,8 +510,6 @@ def write_xlsx(path: str, records: list[dict]):
         "账户",
         "组别",
         "抽奖情况",
-        "详细原因",
-        "抽奖时间",
         "抽奖IP",
         "抽奖1",
         "过期时间",
@@ -475,6 +517,7 @@ def write_xlsx(path: str, records: list[dict]):
         "过期时间",
         "抽奖3",
         "过期时间",
+        "消费金额",
     ]
     sheet.append(headers)
 
@@ -497,10 +540,10 @@ def write_xlsx(path: str, records: list[dict]):
             str(record.get("username") or ""),
             str(record.get("group_position") or ""),
             label,
-            detail_text(record),
-            str(record.get("sign_time") or ""),
             str(record.get("sign_ip") or ""),
-        ] + lottery_columns(record)
+        ] + lottery_columns(record) + [
+            safe_float(record.get("invoice_money"), 0.0),
+        ]
         sheet.append(row)
         row_index = sheet.max_row
         for cell in sheet[row_index]:
@@ -510,18 +553,28 @@ def write_xlsx(path: str, records: list[dict]):
         sheet.cell(row_index, 2).alignment = Alignment(horizontal="center", vertical="center")
         sheet.cell(row_index, 4).alignment = Alignment(horizontal="center", vertical="center")
         sheet.cell(row_index, 5).alignment = Alignment(horizontal="center", vertical="center")
-        sheet.cell(row_index, 7).alignment = Alignment(horizontal="center", vertical="center")
-        sheet.cell(row_index, 8).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        sheet.cell(row_index, 6).alignment = Alignment(vertical="center", wrap_text=True)
-        for column_index in range(9, 15):
+        sheet.cell(row_index, 6).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for column_index in range(7, 14):
             sheet.cell(row_index, column_index).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         sheet.cell(row_index, 2).number_format = "0"
+        sheet.cell(row_index, 13).number_format = "0.00"
         fill = fill_for_lottery_count(lottery_count(record))
         if fill:
             sheet.cell(row_index, 2).fill = fill
         sheet.cell(row_index, 5).font = font_for_status(label)
-        for column_index in (10, 12, 14):
+        for column_index in (8, 10, 12):
             sheet.cell(row_index, column_index).font = FONT_RED if sheet.cell(row_index, column_index).value else FONT_DARK
+        for prize_column in (7, 9, 11):
+            prize_cell = sheet.cell(row_index, prize_column)
+            expiry_cell = sheet.cell(row_index, prize_column + 1)
+            title = str(prize_cell.value or "").strip()
+            if not title:
+                continue
+            if not is_normal_six_bean_prize(title):
+                prize_cell.fill = STATUS_RED_FILL
+            if is_bean_prize(title):
+                expiry_cell.value = bean_expiry_date()
+                expiry_cell.font = FONT_GREEN
 
     sheet.freeze_panes = "A2"
     widths = {
@@ -530,15 +583,14 @@ def write_xlsx(path: str, records: list[dict]):
         "C": 24,
         "D": 16,
         "E": 18,
-        "F": 36,
-        "G": 20,
+        "F": 18,
+        "G": 28,
         "H": 18,
         "I": 28,
         "J": 18,
         "K": 28,
         "L": 18,
-        "M": 28,
-        "N": 18,
+        "M": 14,
     }
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
@@ -564,11 +616,28 @@ def split_text(text: str, limit: int = 3900) -> list[str]:
     return parts
 
 
+def telegram_credentials() -> tuple[str, str]:
+    token = (
+        os.getenv("TELEGRAM_BOT_TOKEN")
+        or os.getenv("TG_BOT_TOKEN")
+        or os.getenv("TELEGRAM_TOKEN")
+        or os.getenv("TG_TOKEN")
+        or ""
+    ).strip()
+    chat_id = (
+        os.getenv("TELEGRAM_CHAT_ID")
+        or os.getenv("TG_CHAT_ID")
+        or os.getenv("TELEGRAM_TO")
+        or os.getenv("TG_TO")
+        or ""
+    ).strip()
+    return token, chat_id
+
+
 def send_telegram_message(text: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    token, chat_id = telegram_credentials()
     if not token or not chat_id:
-        print("[telegram] skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is empty")
+        print("[telegram] skipped: Telegram bot token or chat id is empty")
         return False
     ok = True
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -585,10 +654,9 @@ def send_telegram_message(text: str) -> bool:
 
 
 def send_telegram_document(path: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    token, chat_id = telegram_credentials()
     if not token or not chat_id:
-        print("[telegram] skipped document: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is empty")
+        print("[telegram] skipped document: Telegram bot token or chat id is empty")
         return False
     if not os.path.exists(path):
         print(f"[telegram] skipped document: file not found: {path}")
@@ -642,7 +710,8 @@ def parse_channels() -> list[str]:
     if raw:
         return [item.strip().lower() for item in raw.split(",") if item.strip()]
     channels = []
-    if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+    token, chat_id = telegram_credentials()
+    if token and chat_id:
         channels.append("telegram")
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         channels.append("email")
@@ -664,6 +733,8 @@ def main():
 
     channels = parse_channels()
     print(f"[notify] channels={','.join(channels) if channels else 'none'}")
+    if "telegram" in channels and not all(telegram_credentials()):
+        print("[notify] telegram requested but bot token/chat id is missing")
     send_tg_text = is_enabled("TELEGRAM_SEND_TEXT", "true")
     send_tg_xlsx = is_enabled("TELEGRAM_SEND_XLSX", "true")
     generate_xlsx = send_tg_xlsx or is_enabled("GENERATE_XLSX", "false")

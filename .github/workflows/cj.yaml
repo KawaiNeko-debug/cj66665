@@ -1,4 +1,4 @@
-name: lottery-manual
+name: api
 
 on:
   workflow_dispatch:
@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       BASE_URL: ${{ secrets.BASE_URL }}
@@ -231,6 +231,8 @@ jobs:
                   "initial_points": 0.0,
                   "final_points": 0.0,
                   "points_reward": 0.0,
+                  "invoice_money": 0.0,
+                  "consumption_amount": 0.0,
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
@@ -449,6 +451,8 @@ jobs:
                   "initial_points": 0.0,
                   "final_points": 0.0,
                   "points_reward": 0.0,
+                  "invoice_money": 0.0,
+                  "consumption_amount": 0.0,
                   "has_reward": False,
                   "password_error": False,
                   "risk_controlled": False,
@@ -513,8 +517,10 @@ jobs:
           GENERATE_XLSX: "true"
           OUTPUT_XLSX_PATH: merged/lottery-summary.xlsx
           NOTIFY_CHANNELS: telegram
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TG_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.TG_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TG_CHAT_ID || secrets.TELEGRAM_TO || secrets.TG_TO }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_TO || secrets.TG_TO }}
           TELEGRAM_SEND_TEXT: "true"
           TELEGRAM_SEND_XLSX: "true"
         run: python h3/report.py merged
