@@ -51,6 +51,30 @@ def safe_float(v, default=0.0) -> float:
         return default
 
 
+def pick_money_value(*values) -> float:
+    fallback = None
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text == "":
+            continue
+        money = safe_float(text, 0.0)
+        if money != 0:
+            return money
+        if fallback is None:
+            fallback = 0.0
+    return fallback if fallback is not None else 0.0
+
+
+def record_invoice_money(record: dict) -> float:
+    return pick_money_value(
+        record.get("invoice_money"),
+        record.get("consumption_amount"),
+        record.get("invoiceMoney"),
+    )
+
+
 def mask_account(acc: str) -> str:
     if not acc:
         return ""
@@ -119,8 +143,8 @@ def normalize_records(data, source_path: str) -> list[dict]:
             "initial_points": safe_float(r.get("initial_points"), default=0.0),
             "final_points": safe_float(r.get("final_points"), default=0.0),
             "points_reward": safe_float(r.get("points_reward"), default=0.0),
-            "invoice_money": safe_float(r.get("invoice_money", r.get("consumption_amount")), default=0.0),
-            "consumption_amount": safe_float(r.get("consumption_amount", r.get("invoice_money")), default=0.0),
+            "invoice_money": record_invoice_money(r),
+            "consumption_amount": record_invoice_money(r),
             "has_reward": truthy(r.get("has_reward")),
             "password_error": truthy(r.get("password_error")),
             "retry_count": safe_int(r.get("retry_count"), default=0),

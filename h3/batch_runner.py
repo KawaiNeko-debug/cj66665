@@ -50,6 +50,30 @@ def safe_float(value, default=0.0) -> float:
         return default
 
 
+def pick_money_value(*values) -> float:
+    fallback = None
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text == "":
+            continue
+        money = safe_float(text, 0.0)
+        if money != 0:
+            return money
+        if fallback is None:
+            fallback = 0.0
+    return fallback if fallback is not None else 0.0
+
+
+def record_invoice_money(record: dict) -> float:
+    return pick_money_value(
+        record.get("invoice_money"),
+        record.get("consumption_amount"),
+        record.get("invoiceMoney"),
+    )
+
+
 def load_accounts() -> list[dict]:
     raw = os.getenv("ACCOUNTS", "") or ""
     group_name = (os.getenv("GROUP_NAME") or os.getenv("BATCH_NAME") or "").strip()
@@ -144,8 +168,8 @@ def normalize_result(account: dict, result_path: str) -> dict:
             "initial_points": safe_float(raw.get("initial_points"), 0.0),
             "final_points": safe_float(raw.get("final_points"), 0.0),
             "points_reward": safe_float(raw.get("points_reward"), 0.0),
-            "invoice_money": safe_float(raw.get("invoice_money", raw.get("consumption_amount")), 0.0),
-            "consumption_amount": safe_float(raw.get("consumption_amount", raw.get("invoice_money")), 0.0),
+            "invoice_money": record_invoice_money(raw),
+            "consumption_amount": record_invoice_money(raw),
             "has_reward": truthy(raw.get("has_reward")),
             "password_error": truthy(raw.get("password_error")),
             "risk_controlled": truthy(raw.get("risk_controlled")),
@@ -238,8 +262,8 @@ def write_batch_result(path: str, results: list[dict], controller: PauseControll
                 "initial_points": item["initial_points"],
                 "final_points": item["final_points"],
                 "points_reward": item["points_reward"],
-                "invoice_money": item.get("invoice_money", item.get("consumption_amount", 0.0)),
-                "consumption_amount": item.get("consumption_amount", item.get("invoice_money", 0.0)),
+                "invoice_money": record_invoice_money(item),
+                "consumption_amount": record_invoice_money(item),
                 "has_reward": item["has_reward"],
                 "password_error": item["password_error"],
                 "risk_controlled": item["risk_controlled"],

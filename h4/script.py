@@ -35,6 +35,8 @@ _PUBLIC_IP_CACHE = {"loaded": False, "value": ""}
 MINIPROGRAM_APPID = "wx6c7b851c877dba42"
 DEFAULT_REFERER = f"https://servicewechat.com/{MINIPROGRAM_APPID}/140/page-frame.html"
 DEFAULT_MP_SECRET_KEY_VALUE = "62333335373634382d613039362d346439642d383935652d626666396162323664656136"
+DEFAULT_INVOICE_SECRET_KEY_VALUE = "64656661756c744b65794964"
+DEFAULT_INVOICE_REFERER_PATH = "/pages-common/invoice/index"
 INVOICE_INFO_PATH = "/api/integrated/vatInvoiceInfo/selectInvoiceInfoDetails"
 DEFAULT_ACTIVITY_URL = (
     "https://m.jlc.com/pages-promo/brand-campaign/index"
@@ -1126,14 +1128,16 @@ def fetch_invoice_money(page: Page) -> float:
     payload = {
         "path": INVOICE_INFO_PATH,
         "tokenKeys": [item for item in token_keys if item],
-        "clientType": env_first("JLC_CLIENT_TYPE", "CLIENT_TYPE", default="MP-WEIXIN"),
+        "clientType": env_first("INVOICE_CLIENT_TYPE", default="WEB"),
         "mpVersion": env_first("JLC_MP_VERSION", "MP_VERSION", default="1.112.0"),
         "mpEnv": env_first("JLC_MP_ENV", "MP_ENV", default="release"),
         "mpAppid": env_first("JLC_MP_APPID", "MP_APPID", default=MINIPROGRAM_APPID),
-        "secretKey": env_first("JLC_SECRET_KEY_VALUE", "SECRET_KEY_VALUE", "HEADER_SECRET_KEY_VALUE", default=DEFAULT_MP_SECRET_KEY_VALUE),
+        "secretKey": env_first("INVOICE_SECRET_KEY_VALUE", default=DEFAULT_INVOICE_SECRET_KEY_VALUE),
+        "referer": env_first("INVOICE_REFERER", default=f"https://m.jlc.com{DEFAULT_INVOICE_REFERER_PATH}"),
         "clientTypeHeader": env_first("HEADER_CLIENT_TYPE", default="x-jlc-clienttype"),
         "tokenHeader": env_first("HEADER_ACCESS_TOKEN", default="x-jlc-accesstoken"),
         "secretKeyHeader": env_first("HEADER_SECRET_KEY", default="secretkey"),
+        "body": {"invoiceType": 1, "vatCompanyName": ""},
     }
     try:
         result = page.evaluate(
@@ -1172,6 +1176,9 @@ def fetch_invoice_money(page: Page) -> float:
                 token = getStorage(key) || getCookie(key);
                 if (token) break;
               }
+              const xsrf = getStorage("XSRF-TOKEN") || getCookie("XSRF-TOKEN")
+                || getStorage("xsrf-token") || getCookie("xsrf-token")
+                || getStorage("x-xsrf-token") || getCookie("x-xsrf-token");
               const hasInvoiceMoney = (value) => {
                 if (Array.isArray(value)) return value.some(hasInvoiceMoney);
                 if (value && typeof value === 'object') {
@@ -1200,14 +1207,16 @@ def fetch_invoice_money(page: Page) -> float:
                   headers[cfg.tokenHeader || "x-jlc-accesstoken"] = token;
                   headers["x-jlc-accesstoken"] = token;
                 }
+                if (xsrf) headers["x-xsrf-token"] = xsrf;
                 return headers;
               };
               const request = async (method) => {
                 const response = await fetch(cfg.path, {
                   method,
                   credentials: "include",
+                  referrer: cfg.referer || window.location.href,
                   headers: buildHeaders(method === "POST"),
-                  body: method === "POST" ? "{}" : undefined,
+                  body: method === "POST" ? JSON.stringify(cfg.body || {"invoiceType":1,"vatCompanyName":""}) : undefined,
                 });
                 const text = await response.text();
                 let data = null;

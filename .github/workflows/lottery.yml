@@ -108,6 +108,9 @@ jobs:
       H4_NETWORKIDLE_TIMEOUT_MS: "60000"
       H4_SELECTOR_TIMEOUT_MS: "45000"
       H4_RESULT_POPUP_TIMEOUT_SECONDS: "35"
+      INVOICE_CLIENT_TYPE: WEB
+      INVOICE_SECRET_KEY_VALUE: 64656661756c744b65794964
+      INVOICE_REFERER: https://m.jlc.com/pages-common/invoice/index
       GROUP_NAME: h4-browser-lottery
       GROUP_NUMBER: "1"
       ACCOUNT_INDEX: ${{ matrix.account_index }}
@@ -303,6 +306,9 @@ jobs:
       H4_NETWORKIDLE_TIMEOUT_MS: "60000"
       H4_SELECTOR_TIMEOUT_MS: "45000"
       H4_RESULT_POPUP_TIMEOUT_SECONDS: "35"
+      INVOICE_CLIENT_TYPE: WEB
+      INVOICE_SECRET_KEY_VALUE: 64656661756c744b65794964
+      INVOICE_REFERER: https://m.jlc.com/pages-common/invoice/index
       GROUP_NAME: h4-browser-lottery
       GROUP_NUMBER: "1"
       ACCOUNT_INDEX: ${{ matrix.account_index }}

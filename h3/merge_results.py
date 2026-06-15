@@ -22,6 +22,37 @@ def safe_int(value, default=0) -> int:
         return default
 
 
+def safe_float(value, default=0.0) -> float:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return default
+
+
+def pick_money_value(*values) -> float:
+    fallback = None
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text == "":
+            continue
+        money = safe_float(text, 0.0)
+        if money != 0:
+            return money
+        if fallback is None:
+            fallback = 0.0
+    return fallback if fallback is not None else 0.0
+
+
+def record_invoice_money(record: dict) -> float:
+    return pick_money_value(
+        record.get("invoice_money"),
+        record.get("consumption_amount"),
+        record.get("invoiceMoney"),
+    )
+
+
 def load_single_result(path: str):
     try:
         with open(path, "r", encoding="utf-8") as file:
@@ -116,8 +147,8 @@ def main():
                 "initial_points": row.get("initial_points", 0.0),
                 "final_points": row.get("final_points", 0.0),
                 "points_reward": row.get("points_reward", 0.0),
-                "invoice_money": row.get("invoice_money", row.get("consumption_amount", 0.0)),
-                "consumption_amount": row.get("consumption_amount", row.get("invoice_money", 0.0)),
+                "invoice_money": record_invoice_money(row),
+                "consumption_amount": record_invoice_money(row),
                 "has_reward": truthy(row.get("has_reward")),
                 "password_error": truthy(row.get("password_error")),
                 "risk_controlled": truthy(row.get("risk_controlled")),

@@ -69,6 +69,30 @@ def safe_float(value, default=0.0) -> float:
         return default
 
 
+def pick_money_value(*values) -> float:
+    fallback = None
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text == "":
+            continue
+        money = safe_float(text, 0.0)
+        if money != 0:
+            return money
+        if fallback is None:
+            fallback = 0.0
+    return fallback if fallback is not None else 0.0
+
+
+def record_invoice_money(record: dict) -> float:
+    return pick_money_value(
+        record.get("invoice_money"),
+        record.get("consumption_amount"),
+        record.get("invoiceMoney"),
+    )
+
+
 def default_group_name(group_number: int) -> str:
     return f"{group_number}组" if group_number > 0 else ""
 
@@ -206,7 +230,7 @@ def normalize_record(record: dict, payload: dict, account_lookup: dict[tuple[int
         "initial_points": safe_float(record.get("initial_points"), 0.0),
         "final_points": safe_float(record.get("final_points"), 0.0),
         "points_reward": safe_float(record.get("points_reward"), 0.0),
-        "invoice_money": safe_float(record.get("invoice_money", record.get("consumption_amount")), 0.0),
+        "invoice_money": record_invoice_money(record),
         "has_reward": truthy(record.get("has_reward")),
         "password_error": truthy(record.get("password_error")),
         "risk_controlled": risk_controlled,
@@ -542,7 +566,7 @@ def write_xlsx(path: str, records: list[dict]):
             label,
             str(record.get("sign_ip") or ""),
         ] + lottery_columns(record) + [
-            safe_float(record.get("invoice_money"), 0.0),
+            record_invoice_money(record),
         ]
         sheet.append(row)
         row_index = sheet.max_row

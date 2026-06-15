@@ -106,6 +106,8 @@ EXCHANGE_LOTTERY_CHANCE_PATH = "/api/activity/brand/activity/exchangeLotteryChan
 LOTTERY_KEY_COUNT_PATH = "/api/cgi/operationService/front/lottery/getLuckyKeyCount"
 LOTTERY_TURN_PATH = "/api/cgi/operationService/front/lottery/turn"
 INVOICE_INFO_PATH = "/api/integrated/vatInvoiceInfo/selectInvoiceInfoDetails"
+DEFAULT_INVOICE_SECRET_KEY_VALUE = "64656661756c744b65794964"
+DEFAULT_INVOICE_REFERER_PATH = "/pages-common/invoice/index"
 DEFAULT_LOTTERY_ACTIVITY_CODE = "LAKU"
 LOTTERY_SIGNUP_BATCHES = ([6], [7, 8], [9], [10])
 
@@ -180,6 +182,32 @@ def find_invoice_money_value(value):
             if found is not None:
                 return found
     return None
+
+
+def pick_money_value(*values) -> float:
+    fallback = None
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text == "":
+            continue
+        money = safe_float(text, 0.0)
+        if money != 0:
+            return money
+        if fallback is None:
+            fallback = 0.0
+    return fallback if fallback is not None else 0.0
+
+
+def record_invoice_money(record) -> float:
+    if not isinstance(record, dict):
+        return 0.0
+    return pick_money_value(
+        record.get("invoice_money"),
+        record.get("consumption_amount"),
+        record.get("invoiceMoney"),
+    )
 
 def truncate_text(s: str, limit: int = 1200) -> str:
     if s is None:
@@ -711,12 +739,72 @@ class ApiClient:
             log(f"账号{self.account_index} - 🔄 token 刷新失败: {e}")
         return False
 
-    def _get_json_once(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True):
+    def _browser_cookie_header(self) -> str:
         try:
+            cookies = self.page.context.cookies(self.base_url)
+        except Exception:
+            return ""
+        pairs = []
+        for item in cookies:
+            name = str(item.get("name") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if name:
+                pairs.append(f"{name}={value}")
+        return "; ".join(pairs)
+
+    def _browser_xsrf_token(self) -> str:
+        try:
+            return str(
+                self.page.evaluate(
+                    """
+                    () => {
+                      const names = ['XSRF-TOKEN', 'xsrf-token', 'x-xsrf-token'];
+                      for (const key of names) {
+                        const local = window.localStorage.getItem(key) || window.sessionStorage.getItem(key);
+                        if (local) return local;
+                      }
+                      const cookies = String(document.cookie || '').split(';');
+                      for (const row of cookies) {
+                        const index = row.indexOf('=');
+                        const name = row.slice(0, index).trim();
+                        if (names.includes(name)) return decodeURIComponent(row.slice(index + 1));
+                      }
+                      return '';
+                    }
+                    """
+                )
+                or ""
+            ).strip()
+        except Exception:
+            return ""
+
+    def _invoice_headers(self) -> dict:
+        headers = dict(self.headers)
+        invoice_client_type = env_first("INVOICE_CLIENT_TYPE", default="WEB")
+        invoice_secret_key = env_first("INVOICE_SECRET_KEY_VALUE", default=DEFAULT_INVOICE_SECRET_KEY_VALUE)
+        invoice_referer = env_first("INVOICE_REFERER", default=f"{self.base_url}{DEFAULT_INVOICE_REFERER_PATH}")
+        headers[HEADER_CLIENT_TYPE] = invoice_client_type
+        headers["x-jlc-clienttype"] = invoice_client_type
+        headers[HEADER_SECRET_KEY] = invoice_secret_key
+        headers["secretkey"] = invoice_secret_key
+        headers["referer"] = invoice_referer
+        headers["origin"] = self.base_url
+        headers["content-type"] = "application/json"
+        cookie = self._browser_cookie_header()
+        if cookie:
+            headers["cookie"] = cookie
+        xsrf = self._browser_xsrf_token()
+        if xsrf:
+            headers["x-xsrf-token"] = xsrf
+        return headers
+
+    def _get_json_once(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
+        try:
+            headers = headers_override or self.headers
             if self.http:
-                resp = self.http.get(url, headers=self.headers)
+                resp = self.http.get(url, headers=headers)
             else:
-                resp = requests.get(url, headers=self.headers, timeout=12)
+                resp = requests.get(url, headers=headers, timeout=12)
 
             if resp.status_code != 200:
                 allow = resp.headers.get("Allow") or resp.headers.get("allow") or ""
@@ -750,9 +838,9 @@ class ApiClient:
             log(f"账号{self.account_index} - {tag}异常: {e}")
             return None
 
-    def _post_json_once(self, url, payload=None, tag="API", dump_body_on_error=False, dump_json_on_success_false=True):
+    def _post_json_once(self, url, payload=None, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
         try:
-            headers = dict(self.headers)
+            headers = dict(headers_override or self.headers)
             headers.setdefault("content-type", "application/json;charset=UTF-8")
             if payload is None:
                 if self.http:
@@ -797,24 +885,50 @@ class ApiClient:
             log(f"账号{self.account_index} - {tag}异常: {e}")
             return None
 
-    def get_json_retry1(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True):
-        data = self._get_json_once(url, tag=tag, dump_body_on_error=dump_body_on_error, dump_json_on_success_false=dump_json_on_success_false)
+    def get_json_retry1(self, url, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
+        data = self._get_json_once(
+            url,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
         if isinstance(data, dict) and data.get("success") is True:
             return data
 
         time.sleep(random.uniform(0.6, 1.2))
         log(f"账号{self.account_index} - 🔁 {tag}GET失败，重试一次GET...")
-        data2 = self._get_json_once(url, tag=tag, dump_body_on_error=dump_body_on_error, dump_json_on_success_false=dump_json_on_success_false)
+        data2 = self._get_json_once(
+            url,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
         return data2 if data2 is not None else data
 
-    def post_json_retry1(self, url, payload=None, tag="API", dump_body_on_error=False, dump_json_on_success_false=True):
-        data = self._post_json_once(url, payload=payload, tag=tag, dump_body_on_error=dump_body_on_error, dump_json_on_success_false=dump_json_on_success_false)
+    def post_json_retry1(self, url, payload=None, tag="API", dump_body_on_error=False, dump_json_on_success_false=True, headers_override=None):
+        data = self._post_json_once(
+            url,
+            payload=payload,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
         if isinstance(data, dict) and data.get("success") is True:
             return data
 
         time.sleep(random.uniform(0.6, 1.2))
         log(f"账号{self.account_index} - 🔁 {tag}POST失败，重试一次POST...")
-        data2 = self._post_json_once(url, payload=payload, tag=tag, dump_body_on_error=dump_body_on_error, dump_json_on_success_false=dump_json_on_success_false)
+        data2 = self._post_json_once(
+            url,
+            payload=payload,
+            tag=tag,
+            dump_body_on_error=dump_body_on_error,
+            dump_json_on_success_false=dump_json_on_success_false,
+            headers_override=headers_override,
+        )
         return data2 if data2 is not None else data
 
     @with_retry
@@ -833,12 +947,15 @@ class ApiClient:
 
     def fetch_invoice_money(self) -> float:
         url = f"{self.base_url}{INVOICE_INFO_PATH}"
+        headers = self._invoice_headers()
+        payload = {"invoiceType": 1, "vatCompanyName": ""}
         data = self.post_json_retry1(
             url,
-            payload={},
+            payload=payload,
             tag="消费金额",
             dump_body_on_error=True,
             dump_json_on_success_false=True,
+            headers_override=headers,
         )
         money = find_invoice_money_value(data)
         if money is None:
@@ -847,6 +964,7 @@ class ApiClient:
                 tag="消费金额GET",
                 dump_body_on_error=True,
                 dump_json_on_success_false=True,
+                headers_override=headers,
             )
             money = find_invoice_money_value(data)
         if money is None:
@@ -1584,6 +1702,7 @@ def write_results_json(path, all_results, total_accounts):
         group_number = safe_int(os.getenv('GROUP_NUMBER'), 0)
         execution_order = safe_int(os.getenv('EXECUTION_ORDER'), 0)
         for r in all_results:
+            invoice_money = record_invoice_money(r)
             sanitized.append({
                 "account_index": r.get("account_index"),
                 "execution_order": execution_order or r.get("account_index"),
@@ -1595,8 +1714,8 @@ def write_results_json(path, all_results, total_accounts):
                 "initial_points": r.get("initial_points"),
                 "final_points": r.get("final_points"),
                 "points_reward": r.get("points_reward"),
-                "invoice_money": r.get("invoice_money", r.get("consumption_amount", 0.0)),
-                "consumption_amount": r.get("consumption_amount", r.get("invoice_money", 0.0)),
+                "invoice_money": invoice_money,
+                "consumption_amount": invoice_money,
                 "has_reward": r.get("has_reward"),
                 "password_error": r.get("password_error"),
                 "risk_controlled": r.get("risk_controlled"),

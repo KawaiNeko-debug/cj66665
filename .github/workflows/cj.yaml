@@ -116,6 +116,9 @@ jobs:
       JLC_CLIENT_TYPE: ${{ secrets.JLC_CLIENT_TYPE }}
       JLC_REFERER: ${{ secrets.JLC_REFERER }}
       JLC_SECRET_KEY_VALUE: ${{ secrets.JLC_SECRET_KEY_VALUE }}
+      INVOICE_CLIENT_TYPE: WEB
+      INVOICE_SECRET_KEY_VALUE: 64656661756c744b65794964
+      INVOICE_REFERER: https://m.jlc.com/pages-common/invoice/index
       JLC_MP_VERSION: ${{ secrets.JLC_MP_VERSION }}
       JLC_MP_ENV: ${{ secrets.JLC_MP_ENV }}
       JLC_MP_APPID: ${{ secrets.JLC_MP_APPID }}
@@ -339,6 +342,9 @@ jobs:
       JLC_CLIENT_TYPE: ${{ secrets.JLC_CLIENT_TYPE }}
       JLC_REFERER: ${{ secrets.JLC_REFERER }}
       JLC_SECRET_KEY_VALUE: ${{ secrets.JLC_SECRET_KEY_VALUE }}
+      INVOICE_CLIENT_TYPE: WEB
+      INVOICE_SECRET_KEY_VALUE: 64656661756c744b65794964
+      INVOICE_REFERER: https://m.jlc.com/pages-common/invoice/index
       JLC_MP_VERSION: ${{ secrets.JLC_MP_VERSION }}
       JLC_MP_ENV: ${{ secrets.JLC_MP_ENV }}
       JLC_MP_APPID: ${{ secrets.JLC_MP_APPID }}
