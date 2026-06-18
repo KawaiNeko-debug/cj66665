@@ -1,6 +1,5 @@
 requests
-httpx[http2]
-brotli
+httpx
 python-dotenv
 fake-useragent
 playwright

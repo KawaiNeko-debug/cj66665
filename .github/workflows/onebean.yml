@@ -87,9 +87,10 @@ jobs:
   run:
     needs: prepare
     runs-on: ubuntu-22.04
+    timeout-minutes: 35
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       BASE_URL: ${{ secrets.BASE_URL }}
@@ -122,10 +123,11 @@ jobs:
           cache: pip
 
       - name: 安装依赖
+        timeout-minutes: 8
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install --upgrade pip
           python -m pip install -r onebean/requirements.txt
-          python -m playwright install --with-deps chromium
 
       - name: 选择当前账号
         shell: bash
@@ -155,6 +157,7 @@ jobs:
 
       - id: onebean
         name: 执行 1豆活动
+        timeout-minutes: 20
         env:
           RESULT_JSON_PATH: result.json
         run: python onebean/script.py "$ACCOUNT_USERNAME" "$ACCOUNT_PASSWORD" "false"
@@ -263,6 +266,7 @@ jobs:
     needs: [prepare, prepare-retry]
     if: needs.prepare-retry.outputs.has_failed == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -300,10 +304,11 @@ jobs:
           cache: pip
 
       - name: 安装依赖
+        timeout-minutes: 8
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install --upgrade pip
           python -m pip install -r onebean/requirements.txt
-          python -m playwright install --with-deps chromium
 
       - name: 选择重试账号
         shell: bash
@@ -333,6 +338,7 @@ jobs:
 
       - id: onebean
         name: 重试 1豆活动
+        timeout-minutes: 20
         env:
           RESULT_JSON_PATH: result.json
         run: python onebean/script.py "$ACCOUNT_USERNAME" "$ACCOUNT_PASSWORD" "false"
@@ -396,6 +402,7 @@ jobs:
     needs: [prepare, run, prepare-retry, retry]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: 检出代码
         uses: actions/checkout@v4

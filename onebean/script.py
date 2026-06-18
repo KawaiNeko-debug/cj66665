@@ -148,6 +148,20 @@ def build_coupon_records(ids: list[str], payload: dict[str, Any]) -> list[dict[s
     return records
 
 
+def launch_browser(playwright):
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--disable-web-security",
+    ]
+    if str(os.getenv("ONEBEAN_USE_SYSTEM_CHROME", "true")).strip().lower() not in {"0", "false", "no", "off"}:
+        try:
+            return playwright.chromium.launch(channel="chrome", headless=True, args=args)
+        except Exception as exc:
+            log(f"系统浏览器启动失败，回退默认浏览器: {type(exc).__name__}: {truncate_text(exc, 200)}")
+    return playwright.chromium.launch(headless=True, args=args)
+
+
 class OneBeanClient:
     def __init__(self, h3, access_token: str, page, user_agent: str, account_index: int):
         self.h3 = h3
@@ -323,14 +337,7 @@ def run_account(username: str, password: str, account_index: int, total_accounts
         browser = None
         context = None
         try:
-            browser = playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-web-security",
-                ],
-            )
+            browser = launch_browser(playwright)
             context = browser.new_context(
                 user_agent=user_agent,
                 viewport={"width": viewport_width, "height": viewport_height},
