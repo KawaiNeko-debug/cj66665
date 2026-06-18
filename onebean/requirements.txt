@@ -1,0 +1,7 @@
+requests
+httpx[http2]
+brotli
+python-dotenv
+fake-useragent
+playwright
+openpyxl
